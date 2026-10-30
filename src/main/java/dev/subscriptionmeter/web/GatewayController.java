@@ -1,6 +1,7 @@
 package dev.subscriptionmeter.web;
 
 import dev.subscriptionmeter.gateway.*;
+import dev.subscriptionmeter.audit.*;
 import dev.subscriptionmeter.security.*;
 import jakarta.servlet.http.*;
 import java.io.*;
@@ -24,6 +25,7 @@ public class GatewayController {
     public void get(HttpServletRequest request, HttpServletResponse response) throws IOException { forward(request, response); }
     private void forward(HttpServletRequest request, HttpServletResponse response) throws IOException {
         var member = members.authenticate(AdminAuthFilter.credential(request));
+        request.setAttribute(GatewayAccessFilter.MEMBER,member.id());
         byte[] body = request.getInputStream().readNBytes(MAX_BODY + 1);
         if (body.length > MAX_BODY) throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE);
         String model = "unknown";
@@ -39,7 +41,7 @@ public class GatewayController {
         for (String name : List.of("content-type", "accept", "anthropic-version", "anthropic-beta", "user-agent")) {
             String value = request.getHeader(name); if (value != null) headers.put(name, value);
         }
-        gateway.forward(member, request.getMethod(), request.getServletPath(), request.getQueryString(), model, headers, body,
+        gateway.forward(member, (AuditContext)request.getAttribute(GatewayAccessFilter.CONTEXT), model, headers, body,
                 new ResponseSink() {
                     public void start(int status, Map<String, String> outgoing) {
                         response.setStatus(status); outgoing.forEach(response::setHeader);

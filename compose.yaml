@@ -2,6 +2,7 @@ name: subscription-meter
 services:
   postgres:
     image: postgres:18
+    profiles: [legacy]
     restart: unless-stopped
     environment:
       POSTGRES_USER: meter
@@ -10,16 +11,35 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: [CMD-SHELL, "pg_isready -U meter -d meter"]
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U meter -d meter"]
       interval: 5s
       timeout: 3s
       retries: 20
     mem_limit: 768m
+  timescaledb:
+    image: timescale/timescaledb:latest-pg18@sha256:0fcff5761363809d1242f2261a3482197b5a5337407f8b97a976fb174206d579
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: meter
+      POSTGRES_DB: meter
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Run scripts/bootstrap.py first}
+      TIMESCALEDB_TELEMETRY: "off"
+      TS_TUNE_MEMORY: 1GB
+      TS_TUNE_NUM_CPUS: "2"
+      TS_TUNE_MAX_CONNS: "50"
+    volumes:
+      - timescale-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U meter -d meter"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    mem_limit: 1g
   app:
     build: .
     restart: unless-stopped
     environment:
-      DATABASE_URL: jdbc:postgresql://postgres:5432/meter
+      DATABASE_URL: jdbc:postgresql://timescaledb:5432/meter
       DATABASE_USER: meter
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       UPSTREAM_MODE: ${UPSTREAM_MODE:-mock}
@@ -27,10 +47,15 @@ services:
       UPSTREAM_TOKEN_FILE: /run/secrets/upstream-token
       ADMIN_TOKEN_FILE: /run/secrets/admin-token
       METRICS_TOKEN_FILE: /run/secrets/metrics-token
+      TIMESCALE_ENABLED: "true"
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-30}
+      AUDIT_METADATA_RETENTION_DAYS: ${AUDIT_METADATA_RETENTION_DAYS:-90}
+      AUDIT_MAX_RESPONSE_BYTES: ${AUDIT_MAX_RESPONSE_BYTES:-8388608}
+      AUDIT_MAX_EVENTS: ${AUDIT_MAX_EVENTS:-10000}
     secrets: [admin-token, metrics-token, upstream-token]
     ports: ["127.0.0.1:8180:8180"]
     depends_on:
-      postgres: {condition: service_healthy}
+      timescaledb: {condition: service_healthy}
     mem_limit: 1g
     stop_grace_period: 40s
   mock:
@@ -56,6 +81,7 @@ services:
     mem_limit: 512m
 volumes:
   postgres-data:
+  timescale-data:
   prometheus-data:
 secrets:
   admin-token: {file: ./secrets/admin-token}

@@ -45,9 +45,25 @@ try:
     assert len(rows) == 20 and all(r["state"] == "complete" and r["requests"] == 1 for r in rows), rows
     for row in rows:
         assert [row[k] for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")] == [120, 17, 30, 80]
+    captured = 0
+    for member_id in ids:
+        requests = json.loads(call("/admin/requests?memberId=" + member_id)[1])
+        assert len(requests) == 1
+        request_id = requests[0]["id"]
+        detail = json.loads(call("/admin/requests/" + request_id)[1])
+        events = json.loads(call("/admin/requests/" + request_id + "/events")[1])
+        assert detail["capture_state"] == "complete" and not detail["truncated"]
+        assert json.loads(detail["request_body"])["messages"][0]["content"] == "hello"
+        assert detail["first_byte_ms"] is not None and detail["upstream_headers_ms"] is not None
+        assert len(events) == 6 and [e["sequence"] for e in events] == list(range(1, 7))
+        assert "authorization" not in json.loads(detail["request_headers"])
+        assert "Mock response" in events[2]["event_data"]
+        captured += 1
     report = {"mode": "mock", "users": 20, "successful_streams": 20, "attribution_verified": True,
               "input_tokens": 2400, "output_tokens": 340, "cache_creation_tokens": 600, "cache_read_tokens": 1600,
-              "max_request_seconds": round(max(durations), 3), "runtime": status["runtime"], "thread": status["thread"]}
+              "max_request_seconds": round(max(durations), 3), "runtime": status["runtime"], "thread": status["thread"],
+              "full_captures_verified": captured, "ordered_events_verified": captured * 6,
+              "timescale_enabled": status["timescaleEnabled"]}
     (ROOT / "artifacts").mkdir(exist_ok=True)
     (ROOT / "artifacts/smoke.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))

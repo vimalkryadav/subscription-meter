@@ -15,3 +15,27 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 CREATE INDEX IF NOT EXISTS requests_member_time ON requests(member_id, started_at);
 CREATE INDEX IF NOT EXISTS requests_time ON requests(started_at);
+CREATE TABLE IF NOT EXISTS request_details (
+  request_id VARCHAR(36) NOT NULL, started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  member_id VARCHAR(36) NOT NULL, upstream_mode VARCHAR(20) NOT NULL,
+  method VARCHAR(16) NOT NULL, path VARCHAR(80) NOT NULL, query_string TEXT,
+  peer_address VARCHAR(200), protocol VARCHAR(40), request_headers TEXT, request_body TEXT,
+  response_headers TEXT, response_body TEXT, capture_state VARCHAR(32) NOT NULL DEFAULT 'pending',
+  request_bytes BIGINT, response_bytes BIGINT, captured_bytes BIGINT, event_count INTEGER NOT NULL DEFAULT 0,
+  truncated BOOLEAN NOT NULL DEFAULT FALSE, upstream_headers_ms BIGINT, first_byte_ms BIGINT,
+  error_type VARCHAR(200), error_message TEXT, PRIMARY KEY (request_id, started_at)
+);
+CREATE INDEX IF NOT EXISTS details_member_time ON request_details(member_id,started_at);
+CREATE TABLE IF NOT EXISTS request_events (
+  request_id VARCHAR(36) NOT NULL, request_started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  observed_at TIMESTAMP WITH TIME ZONE NOT NULL, sequence INTEGER NOT NULL, elapsed_ms BIGINT NOT NULL,
+  event_type VARCHAR(100) NOT NULL, event_data TEXT NOT NULL, truncated BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (request_id,sequence,observed_at)
+);
+CREATE INDEX IF NOT EXISTS events_request_sequence ON request_events(request_id,sequence);
+CREATE TABLE IF NOT EXISTS gateway_access (
+  request_id VARCHAR(36) NOT NULL, started_at TIMESTAMP WITH TIME ZONE NOT NULL, member_id VARCHAR(36),
+  method VARCHAR(16), path VARCHAR(512), status_code INTEGER, duration_ms BIGINT,
+  peer_address VARCHAR(200), protocol VARCHAR(40), request_headers TEXT, query_string TEXT,
+  PRIMARY KEY(request_id,started_at)
+);

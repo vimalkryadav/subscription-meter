@@ -1,6 +1,7 @@
 package dev.subscriptionmeter.gateway;
 
 import dev.subscriptionmeter.domain.*;
+import dev.subscriptionmeter.audit.*;
 import dev.subscriptionmeter.limits.RequestLimiter;
 import dev.subscriptionmeter.upstream.UpstreamTransport;
 import dev.subscriptionmeter.usage.AnthropicUsageObserver;
@@ -21,16 +22,18 @@ public class GatewayService {
     private final UpstreamTransport transport;
     private final RequestLedger ledger;
     private final GatewayMetrics metrics;
-    public GatewayService(RequestLimiter limiter, UpstreamTransport transport, RequestLedger ledger, GatewayMetrics metrics) {
+    private final AuditCaptureFactory audits;
+    public GatewayService(RequestLimiter limiter, UpstreamTransport transport, RequestLedger ledger, GatewayMetrics metrics, AuditCaptureFactory audits) {
         this.limiter = limiter; this.transport = transport; this.ledger = ledger; this.metrics = metrics;
+        this.audits=audits;
     }
     @EventListener(ApplicationReadyEvent.class)
     void recover() { ledger.markInterrupted(); }
 
-    public void forward(Member member, String method, String path, String query, String model,
+    public void forward(Member member, AuditContext context, String model,
                         Map<String, String> headers, byte[] body, ResponseSink sink) {
         try (var permit = limiter.acquire(member)) {
-            String id = UUID.randomUUID().toString();
+            String id = context.id(), method=context.method(), path=context.path(), query=context.query();
             ledger.begin(id, member.id(), path, model);
             long start = System.nanoTime();
             metrics.started();
@@ -38,7 +41,10 @@ public class GatewayService {
             int status = 502;
             boolean responseStarted = false;
             AnthropicUsageObserver observer = null;
-            try (var reply = transport.send(method, path + (query == null ? "" : "?" + query), headers, body)) {
+            AuditCapture capture = null;
+            try {
+              capture=audits.begin(context,member.id(),body);
+              try (var reply = transport.send(method, path + (query == null ? "" : "?" + query), headers, body)) {
                 status = reply.status();
                 Map<String, String> outgoing = new HashMap<>();
                 reply.headers().forEach((name, values) -> {
@@ -49,6 +55,7 @@ public class GatewayService {
                 upstreamId = outgoing.getOrDefault("request-id", "");
                 upstreamId = upstreamId.substring(0, Math.min(200, upstreamId.length()));
                 boolean streaming = outgoing.getOrDefault("content-type", "").contains("text/event-stream");
+                capture.headers(reply.headers(),streaming);
                 observer = new AnthropicUsageObserver(streaming);
                 outgoing.put("x-meter-request-id", id);
                 outgoing.put("cache-control", "no-store"); outgoing.put("x-accel-buffering", "no");
@@ -60,19 +67,28 @@ public class GatewayService {
                 while ((count = reply.body().read(buffer)) != -1) {
                     if (!streaming && (totalBytes += count) > 32 * 1024 * 1024) throw new IOException("Response size limit");
                     observer.accept(buffer, count);
+                    capture.bytes(buffer,count);
                     try { sink.write(buffer, count); }
-                    catch (IOException disconnected) { state = "disconnected"; return; }
+                    catch (IOException disconnected) { capture.error(disconnected); state = "disconnected"; return; }
                 }
                 if (!streaming) observer.finishJson();
                 if (status < 400) state = observer.error() ? "stream_error" :
                         !path.equals("/v1/messages") || observer.complete() ? "complete" : "partial";
+              }
             } catch (InterruptedException e) {
+                if (capture != null) capture.error(e);
                 Thread.currentThread().interrupt(); state = "interrupted";
                 if (!responseStarted) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Upstream interrupted");
             } catch (IOException e) {
+                if (capture != null) capture.error(e);
                 state = responseStarted ? "partial" : "upstream_error";
                 if (!responseStarted) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Upstream unavailable");
+            } catch (RuntimeException e) {
+                state="gateway_error";
+                if (capture != null) capture.error(e);
+                throw e;
             } finally {
+                if (capture != null) capture.finish(state);
                 RequestResult result = new RequestResult(state, status, (System.nanoTime() - start) / 1_000_000,
                         upstreamId, observer == null ? Usage.empty() : observer.snapshot());
                 metrics.finished(result);

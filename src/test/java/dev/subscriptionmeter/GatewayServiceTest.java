@@ -1,6 +1,8 @@
 package dev.subscriptionmeter;
 
 import dev.subscriptionmeter.domain.*;
+import dev.subscriptionmeter.audit.*;
+import java.time.Instant;
 import dev.subscriptionmeter.gateway.*;
 import dev.subscriptionmeter.limits.InMemoryRequestLimiter;
 import dev.subscriptionmeter.upstream.UpstreamTransport;
@@ -26,18 +28,18 @@ class GatewayServiceTest {
         String body = "{\"usage\":{\"input_tokens\":12,\"output_tokens\":3},\"content\":[{\"text\":\"hello\"}]}";
         var ledger = mock(RequestLedger.class);
         var service = new GatewayService(new InMemoryRequestLimiter(), transport(200, "application/json", body), ledger,
-                new GatewayMetrics(new SimpleMeterRegistry()));
+                new GatewayMetrics(new SimpleMeterRegistry()), audits());
         var bytes = new ByteArrayOutputStream();
-        service.forward(member, "POST", "/v1/messages", null, "test", Map.of(), "{}".getBytes(), sink(bytes));
+        service.forward(member, context(), "test", Map.of(), "{}".getBytes(), sink(bytes));
         assertThat(bytes.toString()).isEqualTo(body);
         verify(ledger).finish(anyString(), argThat(r -> r.state().equals("complete") && r.usage().input() == 12 && r.usage().output() == 3));
     }
     @Test void upstream429IsRecordedAndPassedThrough() {
         var ledger = mock(RequestLedger.class);
         var service = new GatewayService(new InMemoryRequestLimiter(), transport(429, "application/json", "{\"error\":\"rate_limit\"}"), ledger,
-                new GatewayMetrics(new SimpleMeterRegistry()));
+                new GatewayMetrics(new SimpleMeterRegistry()), audits());
         var result = new int[1];
-        service.forward(member, "POST", "/v1/messages", null, "test", Map.of(), "{}".getBytes(), new ResponseSink() {
+        service.forward(member, context(), "test", Map.of(), "{}".getBytes(), new ResponseSink() {
             public void start(int status, Map<String,String> headers) { result[0] = status; }
             public void write(byte[] b, int n) { }
         });
@@ -49,8 +51,8 @@ class GatewayServiceTest {
         var limiter = new InMemoryRequestLimiter();
         String data = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":9}}}\n\n";
         var service = new GatewayService(limiter, transport(200, "text/event-stream", data), ledger,
-                new GatewayMetrics(new SimpleMeterRegistry()));
-        service.forward(member, "POST", "/v1/messages", null, "test", Map.of(), "{}".getBytes(), new ResponseSink() {
+                new GatewayMetrics(new SimpleMeterRegistry()), audits());
+        service.forward(member, context(), "test", Map.of(), "{}".getBytes(), new ResponseSink() {
             public void start(int status, Map<String,String> headers) { }
             public void write(byte[] b, int n) throws IOException { throw new IOException("client gone"); }
         });
@@ -60,10 +62,16 @@ class GatewayServiceTest {
     @Test void missingCredentialDoesNotLeavePendingRequest() {
         var ledger = mock(RequestLedger.class);
         UpstreamTransport broken = (method, path, headers, data) -> { throw new IOException("missing"); };
-        var service = new GatewayService(new InMemoryRequestLimiter(), broken, ledger, new GatewayMetrics(new SimpleMeterRegistry()));
-        assertThatThrownBy(() -> service.forward(member, "POST", "/v1/messages", null, "test", Map.of(), new byte[0], sink(new ByteArrayOutputStream())))
+        var service = new GatewayService(new InMemoryRequestLimiter(), broken, ledger, new GatewayMetrics(new SimpleMeterRegistry()), audits());
+        assertThatThrownBy(() -> service.forward(member, context(), "test", Map.of(), new byte[0], sink(new ByteArrayOutputStream())))
                 .hasMessageContaining("502");
         verify(ledger).finish(anyString(), argThat(r -> r.state().equals("upstream_error") && r.status() == 502));
+    }
+    private AuditContext context() {
+        return new AuditContext(UUID.randomUUID().toString(),Instant.now(),"POST","/v1/messages",null,Map.of(),"127.0.0.1","HTTP/1.1");
+    }
+    private AuditCaptureFactory audits() {
+        return new AuditCaptureFactory(mock(AuditStore.class),new CredentialRedactor(),new SimpleMeterRegistry(),"mock",8388608,10000);
     }
     private ResponseSink sink(ByteArrayOutputStream bytes) {
         return new ResponseSink() {

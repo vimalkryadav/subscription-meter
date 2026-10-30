@@ -19,6 +19,8 @@ public class AdminController {
     private final MemberService members;
     private final AnalyticsReader analytics;
     private final String mode, tokenFile;
+    @Value("${meter.audit.retention-days:30}") private int retentionDays;
+    @Value("${meter.audit.timescale-enabled:false}") private boolean timescale;
     public AdminController(MemberService members, AnalyticsReader analytics, @Value("${meter.mode}") String mode,
             @Value("${meter.upstream-token-file}") String tokenFile) {
         this.members = members; this.analytics = analytics; this.mode = mode; this.tokenFile = tokenFile;
@@ -44,6 +46,7 @@ public class AdminController {
         catch (java.io.IOException ignored) { }
         return Map.of("mode", mode, "credentialConfigured", configured,
                 "subscriptionCompatibility", "unverified", "runtime", Runtime.version().toString(),
-                "limits", "single instance", "thread", Thread.currentThread().isVirtual() ? "virtual" : "platform");
+                "limits", "single instance", "thread", Thread.currentThread().isVirtual() ? "virtual" : "platform",
+                "fullCapture",true,"detailRetentionDays",retentionDays,"timescaleEnabled",timescale);
     }
 }
