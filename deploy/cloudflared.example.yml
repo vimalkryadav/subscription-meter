@@ -1,0 +1,9 @@
+# Supply your named tunnel UUID, JSON credentials path, and hostname.
+# Keep admin/UI access private; only model endpoints are published here.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /home/coder/.cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+ingress:
+  - hostname: gateway.example.com
+    path: ^/v1/(messages(/count_tokens)?|models)$
+    service: http://127.0.0.1:8180
+  - service: http_status:404

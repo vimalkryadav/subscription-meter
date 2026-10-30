@@ -1,0 +1,63 @@
+name: subscription-meter
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: meter
+      POSTGRES_DB: meter
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Run scripts/bootstrap.py first}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U meter -d meter"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 768m
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/meter
+      DATABASE_USER: meter
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      UPSTREAM_MODE: ${UPSTREAM_MODE:-mock}
+      UPSTREAM_URL: ${UPSTREAM_URL:-http://mock:8081}
+      UPSTREAM_TOKEN_FILE: /run/secrets/upstream-token
+      ADMIN_TOKEN_FILE: /run/secrets/admin-token
+      METRICS_TOKEN_FILE: /run/secrets/metrics-token
+    secrets: [admin-token, metrics-token, upstream-token]
+    ports: ["127.0.0.1:8180:8180"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    mem_limit: 1g
+    stop_grace_period: 40s
+  mock:
+    image: python:3.13-slim
+    restart: unless-stopped
+    command: [python, /mock.py]
+    volumes: ["./scripts/mock_upstream.py:/mock.py:ro"]
+    read_only: true
+    user: "10001:10001"
+    mem_limit: 128m
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    secrets: [metrics-token]
+    ports: ["127.0.0.1:9190:9090"]
+    mem_limit: 512m
+volumes:
+  postgres-data:
+  prometheus-data:
+secrets:
+  admin-token: {file: ./secrets/admin-token}
+  metrics-token: {file: ./secrets/metrics-token}
+  upstream-token: {file: ./secrets/upstream-token}

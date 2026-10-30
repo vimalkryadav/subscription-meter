@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS members (
+  id VARCHAR(36) PRIMARY KEY, name VARCHAR(100) NOT NULL,
+  key_hash VARCHAR(64) NOT NULL UNIQUE, key_prefix VARCHAR(16) NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE, rpm INTEGER NOT NULL, concurrency_limit INTEGER NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS requests (
+  id VARCHAR(36) PRIMARY KEY, member_id VARCHAR(36) NOT NULL REFERENCES members(id),
+  started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  path VARCHAR(80) NOT NULL, model VARCHAR(200) NOT NULL,
+  state VARCHAR(32) NOT NULL DEFAULT 'pending', status_code INTEGER,
+  duration_ms BIGINT, upstream_request_id VARCHAR(200), usage_seen BOOLEAN NOT NULL DEFAULT FALSE,
+  input_tokens BIGINT NOT NULL DEFAULT 0, output_tokens BIGINT NOT NULL DEFAULT 0,
+  cache_creation_input_tokens BIGINT NOT NULL DEFAULT 0, cache_read_input_tokens BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS requests_member_time ON requests(member_id, started_at);
+CREATE INDEX IF NOT EXISTS requests_time ON requests(started_at);

@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.db
+secrets/*
+!secrets/.gitkeep
+artifacts/
+target/
+.idea/
+*.iml
+._*
+.DS_Store
