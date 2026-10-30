@@ -79,6 +79,22 @@ services:
     secrets: [metrics-token]
     ports: ["127.0.0.1:9190:9090"]
     mem_limit: 512m
+  public-edge:
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    profiles: [public]
+    restart: unless-stopped
+    ports: ["127.0.0.1:8182:8182"]
+    volumes:
+      - ./deploy/public-gateway.Caddyfile:/etc/caddy/Caddyfile:ro
+    tmpfs: [/config, /data]
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    depends_on:
+      app: {condition: service_started}
 volumes:
   postgres-data:
   timescale-data:

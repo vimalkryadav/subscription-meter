@@ -56,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
                 for event in events:
                     self.wfile.write(("event: " + event["type"] + "\ndata: " + json.dumps(event) + "\n\n").encode())
                     self.wfile.flush()
-                    time.sleep(0.05)
+                    time.sleep(0.5 if data.get("model") == "mock-stream-check" else 0.05)
             except (BrokenPipeError, ConnectionResetError):
                 pass
         else:

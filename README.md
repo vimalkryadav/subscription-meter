@@ -140,13 +140,67 @@ Docker secret bind mounts may retain the old inode after an atomic file replacem
 
 ## Cloudflare
 
-Use a named tunnel and a domain controlled by you. Quick Tunnels do not support
-SSE, so they are unsuitable for the streaming acceptance test. Start from
-`deploy/cloudflared.example.yml`. The configuration publishes only the model
-routes; admin, dashboard, health, and metrics remain private via Coder forwarding.
-Create the DNS route for the hostname and install cloudflared as a supervised
-service after the tunnel is configured. No tunnel, DNS record, or external
-hostname is created by this repository.
+The zero-budget deployment uses an **experimental Quick Tunnel** with a randomly
+assigned HTTPS `trycloudflare.com` hostname. No Cloudflare account or domain is
+needed. The public route is:
+
+```
+Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
+```
+
+`deploy/public-gateway.Caddyfile` permits only `POST /v1/messages`,
+`POST /v1/messages/count_tokens`, and `GET /v1/models`. Member authentication is
+still required by the app. Everything else returns 404, including the dashboard,
+admin APIs, health, and metrics. Admin access stays on the private Coder port
+forward. The public base URL is an API endpoint, not a dashboard URL.
+
+On `bugpolice-control`, start the dedicated public proxy and tunnel service:
+
+```sh
+sudo docker compose --profile public up -d --no-deps public-edge
+sudo install -m 0644 deploy/subscription-meter-tunnel.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now subscription-meter-tunnel.service
+```
+
+The service is specific to this workspace (`coder` user and
+`/home/coder/subscription-meter`). It runs the already installed
+`/usr/local/bin/cloudflared`, restarts on failure, and leaves other tunnel services
+alone. `public-edge` is a separate container with a loopback-only published port.
+The Caddy image has a file capability, so its bounding set retains only
+`NET_BIND_SERVICE`; other capabilities are dropped and it runs as an unprivileged
+user with a read-only root filesystem.
+
+Get the latest hostname or check the connector:
+
+```sh
+sudo journalctl -u subscription-meter-tunnel.service -n 150 --no-pager -o cat
+curl --fail http://127.0.0.1:20249/ready
+```
+
+Run the public acceptance test on the workspace:
+
+```sh
+python3 scripts/tunnel_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
+```
+
+The test refuses live upstream mode, creates a temporary member key, verifies
+private routes are blocked, measures event arrival times, completes 20 concurrent
+mock streams, and revokes the test key. Results go to `artifacts/tunnel-smoke.json`
+and are not committed.
+
+**Observed versus supported behavior:** the initial public test delivered six SSE
+events incrementally (first event 0.462 seconds; final event 2.958 seconds) and
+completed 20 simultaneous mock streams. Cloudflare nevertheless documents SSE as
+unsupported on Quick Tunnels. This experiment is not a guarantee of compatibility
+or availability. Quick Tunnels also have a 200 in-flight-request limit, no uptime
+guarantee, and a hostname that changes when the tunnel is recreated. After a
+restart, retrieve the new URL and update clients' `ANTHROPIC_BASE_URL`.
+
+For a stable, supported deployment later, create a named tunnel under a domain
+controlled by you. `deploy/cloudflared.example.yml` routes that named tunnel to
+the same restricted public proxy. No domain purchase or named tunnel has been
+created by this project.
 
 ## Accounting limits
 

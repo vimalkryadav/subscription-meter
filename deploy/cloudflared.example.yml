@@ -5,5 +5,5 @@ credentials-file: /home/coder/.cloudflared/REPLACE_WITH_TUNNEL_UUID.json
 ingress:
   - hostname: gateway.example.com
     path: ^/v1/(messages(/count_tokens)?|models)$
-    service: http://127.0.0.1:8180
+    service: http://127.0.0.1:8182
   - service: http_status:404
