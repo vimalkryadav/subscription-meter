@@ -1,4 +1,5 @@
 """20-member acceptance test against mock mode. Saves no member keys; revokes fixtures afterward."""
+from admin_auth import authorize
 import concurrent.futures
 import json
 from pathlib import Path
@@ -15,6 +16,7 @@ ADMIN = (ROOT / "secrets/admin-token").read_text().strip()
 def call(path, token=ADMIN, data=None, method=None):
     request = urllib.request.Request(BASE + path, data=json.dumps(data).encode() if data else None,
                                     headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"}, method=method)
+    authorize(request, ROOT, ADMIN)
     with urllib.request.urlopen(request, timeout=60) as response:
         return response.status, response.read()
 

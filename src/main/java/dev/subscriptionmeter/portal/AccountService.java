@@ -20,7 +20,7 @@ public class AccountService {
     public Account register(String username,String name,String password) {
         String login=normalize(username);
         try(var permit=throttle.acquire(login)) {
-            var account=new Account(UUID.randomUUID().toString(),login,name.strip(),passwords.encode(password));
+            var account=new Account(UUID.randomUUID().toString(),login,name.strip(),passwords.encode(password),"member");
             accounts.add(account); return account;
         } catch(DuplicateKeyException e) { throw new ResponseStatusException(HttpStatus.CONFLICT,"Username unavailable"); }
         catch(ResponseStatusException e) { throw e; }

@@ -56,7 +56,7 @@ class PortalFlowTest {
         var result=mvc.perform(post("/portal/api/register").contentType("application/json").header("X-Portal-Request","1")
                 .content(JSON.writeValueAsString(Map.of("username",username,"displayName","Portal Tester","password","a strong test password")))).andReturn();
         assertThat(result.getResponse().getStatus()).isEqualTo(201);
-        assertThat(result.getResponse().getHeader("Set-Cookie")).contains("HttpOnly","Secure","SameSite=Strict","Path=/portal/api");
+        assertThat(result.getResponse().getHeader("Set-Cookie")).contains("HttpOnly","Secure","SameSite=Strict","Path=/");
         var body=json(result);
         return new Login(body.path("user").path("id").asString(),username,result.getResponse().getCookie("meter_session"),body.path("csrfToken").asString());
     }
@@ -106,7 +106,7 @@ class PortalFlowTest {
         assertThat(mvc.perform(post("/portal/api/token/rotate").cookie(a.cookie()).header("X-Portal-Request","1")).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(post("/portal/api/token/rotate").cookie(a.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",a.csrf()).header("Sec-Fetch-Site","cross-site")).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(post("/portal/api/login").contentType("application/json").content("{}")).andReturn().getResponse().getStatus()).isEqualTo(403);
-        assertThat(mvc.perform(get("/admin/key-requests").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(get("/admin/key-requests").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(get("/admin/key-requests").header("Authorization","Bearer "+key)).andReturn().getResponse().getStatus()).isEqualTo(401);
         var own=mvc.perform(get("/portal/api/access").cookie(b.cookie()).param("accountId",a.id())).andReturn();
         assertThat(json(own).path("access").path("state").asString()).isEqualTo("none");
@@ -137,6 +137,23 @@ class PortalFlowTest {
         String next=sessions.create(user.id(),null);
         jdbc.update("UPDATE portal_sessions SET expires_at=? WHERE account_id=?",java.sql.Timestamp.from(Instant.now().minusSeconds(1)),user.id());
         assertThatThrownBy(()->sessions.authenticate(next)).hasMessageContaining("401");
+    }
+    @Test void adminRoleControlsAccessAndDisablesBootstrapKey() throws Exception {
+        Login owner=register(),member=register();
+        jdbc.update("UPDATE portal_accounts SET role='admin' WHERE id=?",owner.id());
+        try {
+            assertThat(mvc.perform(get("/admin/status").header("Authorization","Bearer "+ADMIN)).andReturn().getResponse().getStatus()).isEqualTo(401);
+            assertThat(mvc.perform(get("/admin/status").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(200);
+            assertThat(mvc.perform(get("/admin/status").cookie(member.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+            assertThat(json(mvc.perform(get("/portal/api/session").cookie(owner.cookie())).andReturn()).path("user").path("role").asString()).isEqualTo("admin");
+            assertThat(mvc.perform(post("/admin/members").cookie(owner.cookie()).contentType("application/json").content("{}")).andReturn().getResponse().getStatus()).isEqualTo(403);
+            var created=mvc.perform(post("/admin/members").cookie(owner.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",owner.csrf())
+                    .contentType("application/json").content("{\"name\":\"role-test\",\"rpm\":10,\"concurrency\":1}")).andReturn();
+            assertThat(created.getResponse().getStatus()).isEqualTo(201);
+            members.revoke(json(created).path("member").path("id").asString());
+            jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id());
+            assertThat(mvc.perform(get("/admin/status").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+        } finally { jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id()); }
     }
     @Test void rejectionCanBeResubmittedAndLimitsAreValidated() throws Exception {
         Login user=register();String id=request(user);

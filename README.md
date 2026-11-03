@@ -16,7 +16,7 @@ flowchart LR
     G --> D[(TimescaleDB request and event ledger)]
     P[Prometheus] --> G
     B[Member portal / login] --> T
-    M[Admin console / admin key] --> T
+    M[Admin account / session] --> T
 ```
 
 TimescaleDB stores request summaries, full details, ordered streaming events, and
@@ -81,8 +81,9 @@ The member portal is available at the Cloudflare HTTPS root URL, and the admin
 console is at `/manage`; no port forward is needed for normal use. The optional command above gives local maintenance access
 at http://localhost:8180 and Prometheus at http://localhost:9190. Only loopback
 ports are published on the workspace, so external access goes through Cloudflare.
-Open the admin key file directly on the workspace (`secrets/admin-token`) and paste it into the admin console.
-The browser holds it in memory, not localStorage. Do not paste it into chat.
+Sign in with your administrator account at the root URL; it opens `/manage`.
+The deployed owner is `vimalkryadav`. The old admin bearer key is disabled whenever
+an admin account exists. Account sessions use HttpOnly cookies, not localStorage.
 
 Manage the deployment on the workspace:
 
@@ -104,7 +105,7 @@ the service. Persistent volumes are local to this workspace.
    name, and password (12–128 characters). Registration signs them in but grants
    no model access. No email provider or subscription credential is needed.
 2. In the member dashboard they submit **Request access** with a short reason.
-3. The administrator opens `/manage`, signs in with the existing admin key, and
+3. The administrator signs in with their username and password, opens `/manage`, and
    approves or rejects the request. Approval sets RPM and concurrency limits.
 4. An approved user signs in and clicks **Get my auth token**. The gateway issues
    a personal `ANTHROPIC_AUTH_TOKEN`, displays it once, and shows terminal settings.
@@ -116,7 +117,7 @@ the service. Persistent volumes are local to this workspace.
 Token requests, decisions, and issuance are serialized per account in database
 transactions. Repeated or concurrent claims cannot issue multiple active tokens.
 Passwords use salted PBKDF2-HMAC-SHA256 with 600,000 iterations. Sessions are random
-opaque cookies (`Secure`, `HttpOnly`, `SameSite=Strict`, host-only, `/portal/api`)
+opaque cookies (`Secure`, `HttpOnly`, `SameSite=Strict`, host-only, `/`)
 with hashed server-side storage, a 12-hour absolute lifetime, and a one-hour idle
 limit. Up to five sessions are retained per account. Session IDs rotate on login;
 logout invalidates them. CSRF tokens protect authenticated mutations, while a
@@ -125,7 +126,8 @@ CORS is not enabled. Password hashing concurrency and login attempts are bounded
 per instance. Public portal request bodies are capped at 16 KiB by Caddy.
 
 The portal never accepts a client-supplied account ID for access or usage queries.
-Member sessions and gateway tokens cannot access admin endpoints. Passwords,
+Only accounts with the `admin` role can access admin endpoints. Ordinary member
+sessions and gateway tokens cannot. Admin writes also require a CSRF token. Passwords,
 session secrets, and issued keys are not returned in account or approval listings.
 All new tables are additive; existing member keys and captured requests remain.
 
@@ -191,9 +193,9 @@ Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
 | Public path | Purpose | Authentication |
 |---|---|---|
 | `/` | Member signup, login, access requests and own usage | Member account session |
-| `/manage` | Admin console and approval queue | Admin key to load data |
+| `/manage` | Admin console and approval queue | Admin account session |
 | `/portal/api/*` | Account, session and personal-token APIs | Session + CSRF for authenticated writes |
-| `/admin/*` | Members, analytics, captured requests and events | Admin key |
+| `/admin/*` | Members, analytics, captured requests and events | Admin session + CSRF for writes |
 | `POST /gateway/v1/messages` | Streaming and non-streaming model requests | Member key |
 | `POST /gateway/v1/messages/count_tokens` | Token counting | Member key |
 | `GET /gateway/v1/models` | Model listing | Member key |
@@ -201,9 +203,9 @@ Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
 Caddy strips `/gateway` before forwarding model requests to the application.
 The original public `/v1/*` paths now return 404; update existing clients to use
 the `/gateway` base URL. Health, metrics, and other paths also return 404 publicly.
-Admin keys cannot be used as member keys, and member keys cannot access admin
-data. The admin console holds the admin key in browser memory until disconnect or
-reload. Neither key belongs in a URL. Caddy serves the dashboard from the same
+Admin sessions cannot be used as member keys, and member keys cannot access admin
+data. The same account session is used by the portal and admin console; roles are
+checked from the database on every admin request. Sessions and keys do not belong in URLs. Caddy serves the dashboard from the same
 source file as the application, mounted read-only.
 
 On `bugpolice-control`, start the dedicated public proxy and tunnel service:
@@ -230,7 +232,18 @@ sudo journalctl -u subscription-meter-tunnel.service -n 150 --no-pager -o cat
 curl --fail http://127.0.0.1:20249/ready
 ```
 
-Run the public acceptance test on the workspace:
+For operator acceptance scripts, first sign in privately on the workspace:
+
+```sh
+python3 scripts/admin_login.py https://YOUR_RANDOM_HOST.trycloudflare.com
+```
+
+This prompts for the admin username/password and stores an expiring session in
+`secrets/admin-session` with mode 0600. Scripts use that session for admin requests.
+The bootstrap bearer key is only accepted before any admin account exists. New
+signups always receive the `member` role; no public endpoint allows self-promotion.
+
+Run the public acceptance tests on the workspace:
 
 ```sh
 python3 scripts/tunnel_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
@@ -388,3 +401,17 @@ remain available. Do not rerun against a partially restored target blindly.
 
 - [TimescaleDB Docker deployment](https://github.com/timescale/timescaledb-docker)
 - [Hypertable indexes](https://github.com/timescale/docs/blob/latest/use-timescale/hypertables/hypertables-and-unique-indexes.md)
+
+## Bounded live-upstream test
+
+`scripts/live_smoke.py URL --model MODEL_ID` requires a provisioned upstream and
+subscription mode. It sends one non-streaming request with at most 32 output
+tokens, and only on success sends one streaming request. It checks stored request
+attribution, response capture, usage, events, and test-key revocation. It stops on
+an upstream error without trying alternate identities or automatic retries.
+The mode must be changed by the operator; the script itself does not edit `.env`.
+Results are private in `artifacts/live-smoke.json`.
+
+The first live attempt returned HTTP 429 (`rate_limit_error`) from Anthropic.
+Request/error capture and attribution passed, but real generation and streaming
+remain unverified. The deployment was restored to mock mode after that attempt.

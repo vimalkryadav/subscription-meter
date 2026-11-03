@@ -1,4 +1,5 @@
 """Exercise signup, approval, token delivery and account isolation through the public tunnel."""
+from admin_auth import authorize
 import argparse
 import http.cookiejar
 import json
@@ -35,6 +36,7 @@ class Client:
             headers['X-CSRF-Token'] = self.csrf
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(origin + path, data=data, headers=headers)
+        authorize(req, root, admin)
         try:
             response = self.opener.open(req, timeout=30)
         except urllib.error.HTTPError as error:
@@ -64,7 +66,7 @@ try:
         assert client.call('/portal/api/register', body, custom=False)[0] == 403
         code, session, headers = client.call('/portal/api/register', body)
         assert code == 201, code
-        assert all(part in headers['Set-Cookie'] for part in ('Secure', 'HttpOnly', 'SameSite=Strict', 'Path=/portal/api'))
+        assert all(part in headers['Set-Cookie'] for part in ('Secure', 'HttpOnly', 'SameSite=Strict', 'Path=/'))
         client.csrf = session['csrfToken']
         accounts.append(session['user']['id'])
         assert 'password' not in json.dumps(session).lower()
@@ -76,7 +78,7 @@ try:
         client.csrf = session['csrfToken']
         assert client.call('/portal/api/session')[1]['user']['id'] == accounts[-1]
         assert client.call('/portal/api/token', {})[0] == 409
-        assert client.call('/admin/key-requests')[0] == 401
+        assert client.call('/admin/key-requests')[0] == 403
     report['signup_login_and_session_rotation'] = True
     assert alice.call('/portal/api/key-requests', {'reason': 'CSRF check'}, csrf=False)[0] == 403
     code, result, _ = alice.call('/portal/api/key-requests', {'reason': 'Public portal acceptance test'})
@@ -84,7 +86,7 @@ try:
     request_id = result['access']['request']['id']
     requests.append(request_id)
     assert alice.call('/portal/api/token', {})[0] == 409
-    assert alice.call('/admin/key-requests/' + request_id + '/decision', {'approve': True, 'rpm': 60, 'concurrency': 4})[0] == 401
+    assert alice.call('/admin/key-requests/' + request_id + '/decision', {'approve': True, 'rpm': 60, 'concurrency': 4})[0] == 403
     queue = owner.call('/admin/key-requests', token=admin)[1]
     assert any(item['request']['id'] == request_id and item['state'] == 'pending' for item in queue)
     assert owner.call('/admin/key-requests/' + request_id + '/decision', {'approve': True, 'rpm': 60, 'concurrency': 4}, admin)[0] == 200

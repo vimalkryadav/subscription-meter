@@ -11,7 +11,7 @@ public class JdbcPortalRepository implements AccountRepository, SessionRepositor
     private final JdbcTemplate jdbc;
     public JdbcPortalRepository(JdbcTemplate jdbc) { this.jdbc=jdbc; }
     private Account account(ResultSet rs,int row) throws SQLException {
-        return new Account(rs.getString("id"),rs.getString("username"),rs.getString("display_name"),rs.getString("password_hash"));
+        return new Account(rs.getString("id"),rs.getString("username"),rs.getString("display_name"),rs.getString("password_hash"),rs.getString("role"));
     }
     public void add(Account a) {
         jdbc.update("INSERT INTO portal_accounts(id,username,display_name,password_hash) VALUES(?,?,?,?)",
@@ -26,6 +26,7 @@ public class JdbcPortalRepository implements AccountRepository, SessionRepositor
     public Account lock(String id) {
         return jdbc.queryForObject("SELECT * FROM portal_accounts WHERE id=? FOR UPDATE",this::account,id);
     }
+    public boolean hasAdmin() { return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM portal_accounts WHERE role='admin')",Boolean.class)); }
     public void add(String hash,String accountId,Instant now,Instant expires) {
         jdbc.update("INSERT INTO portal_sessions(token_hash,account_id,last_seen_at,expires_at) VALUES(?,?,?,?)",
                 hash,accountId,Timestamp.from(now),Timestamp.from(expires));

@@ -7,4 +7,5 @@ public interface AccountRepository {
     Optional<Account> byUsername(String username);
     Optional<Account> byId(String id);
     Account lock(String id);
+    boolean hasAdmin();
 }

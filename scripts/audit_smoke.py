@@ -1,5 +1,6 @@
 """Verify full capture, unchanged upstream payload, redaction, errors, and access audit."""
 from pathlib import Path
+from admin_auth import authorize
 import hashlib
 import json
 import time
@@ -16,6 +17,7 @@ def call(path, token=admin, body=None, method=None):
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(base + path, data=data, method=method,
                                     headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+    authorize(request, root, admin)
     try:
         response = urllib.request.urlopen(request, timeout=30)
     except urllib.error.HTTPError as error:

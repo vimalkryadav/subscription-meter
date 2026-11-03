@@ -1,4 +1,5 @@
 """Probe a freshly created Quick Tunnel using a temporary member key and mock requests only."""
+from admin_auth import authorize
 import argparse
 import concurrent.futures
 import json
@@ -25,7 +26,7 @@ def request(origin, path, token="", body=None, method=None):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
-    return urllib.request.Request(origin + path, data=data, headers=headers, method=method)
+    return authorize(urllib.request.Request(origin + path, data=data, headers=headers, method=method), root, admin)
 
 
 def call(origin, path, token="", body=None, method=None):

@@ -28,7 +28,10 @@ public class PortalController {
     private String accountId(HttpServletRequest req) { return (String)req.getAttribute(PortalAuthFilter.ACCOUNT); }
     private void setCookie(HttpServletResponse res,String value,long seconds) {
         res.addHeader("Set-Cookie",ResponseCookie.from(PortalAuthFilter.COOKIE,value).httpOnly(true).secure(secure)
-                .sameSite("Strict").path("/portal/api").maxAge(seconds).build().toString());
+                .sameSite("Strict").path("/").maxAge(seconds).build().toString());
+        // Retire the previous cookie path so admin pages use the same account session.
+        res.addHeader("Set-Cookie",ResponseCookie.from(PortalAuthFilter.COOKIE,"").httpOnly(true).secure(secure)
+                .sameSite("Strict").path("/portal/api").maxAge(0).build().toString());
     }
     private Map<String,Object> signIn(Account account,HttpServletRequest req,HttpServletResponse res) {
         String raw=sessions.create(account.id(),PortalAuthFilter.cookie(req));
@@ -44,7 +47,8 @@ public class PortalController {
     public Map<String,Object> login(@Valid @RequestBody Login body,HttpServletRequest req,HttpServletResponse res) {
         return signIn(accounts.login(body.username(),body.password()),req,res);
     }
-    @GetMapping("/session") public Map<String,Object> session(HttpServletRequest req) {
+    @GetMapping("/session") public Map<String,Object> session(HttpServletRequest req,HttpServletResponse res) {
+        setCookie(res,PortalAuthFilter.cookie(req),43200);
         return Map.of("user",accounts.find(accountId(req)).profile(),"csrfToken",PortalTokens.csrf(PortalAuthFilter.cookie(req)));
     }
     @PostMapping("/logout") public Map<String,Boolean> logout(HttpServletRequest req,HttpServletResponse res) {
