@@ -39,3 +39,21 @@ CREATE TABLE IF NOT EXISTS gateway_access (
   peer_address VARCHAR(200), protocol VARCHAR(40), request_headers TEXT, query_string TEXT,
   PRIMARY KEY(request_id,started_at)
 );
+CREATE TABLE IF NOT EXISTS portal_accounts (
+  id VARCHAR(36) PRIMARY KEY, username VARCHAR(40) NOT NULL UNIQUE,
+  display_name VARCHAR(100) NOT NULL, password_hash VARCHAR(300) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS portal_sessions (
+  token_hash VARCHAR(64) PRIMARY KEY, account_id VARCHAR(36) NOT NULL REFERENCES portal_accounts(id),
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL, last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_account ON portal_sessions(account_id);
+CREATE TABLE IF NOT EXISTS portal_key_requests (
+  id VARCHAR(36) PRIMARY KEY, account_id VARCHAR(36) NOT NULL UNIQUE REFERENCES portal_accounts(id),
+  state VARCHAR(20) NOT NULL, reason VARCHAR(500) NOT NULL,
+  rpm INTEGER NOT NULL DEFAULT 60, concurrency_limit INTEGER NOT NULL DEFAULT 4,
+  member_id VARCHAR(36) REFERENCES members(id),
+  requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  decided_at TIMESTAMP WITH TIME ZONE
+);

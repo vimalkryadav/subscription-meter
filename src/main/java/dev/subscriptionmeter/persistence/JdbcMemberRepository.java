@@ -24,4 +24,11 @@ public class JdbcMemberRepository implements MemberRepository {
     }
     public List<Member> list() { return jdbc.query("SELECT * FROM members ORDER BY created_at", this::map); }
     public boolean revoke(String id) { return jdbc.update("UPDATE members SET active=FALSE WHERE id=?", id) > 0; }
+    public Optional<Member> findById(String id) {
+        return jdbc.query("SELECT * FROM members WHERE id=?", this::map, id).stream().findFirst();
+    }
+    public boolean replaceKey(String id, String hash, String prefix, int rpm, int concurrency, boolean requireActive) {
+        return jdbc.update("UPDATE members SET key_hash=?,key_prefix=?,rpm=?,concurrency_limit=?,active=TRUE WHERE id=? AND (active=TRUE OR ?=FALSE)",
+                hash,prefix,rpm,concurrency,id,requireActive)==1;
+    }
 }

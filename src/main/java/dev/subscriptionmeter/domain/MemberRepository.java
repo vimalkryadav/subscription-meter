@@ -8,4 +8,6 @@ public interface MemberRepository {
     Optional<Member> findActiveByKeyHash(String keyHash);
     List<Member> list();
     boolean revoke(String id);
+    Optional<Member> findById(String id);
+    boolean replaceKey(String id, String keyHash, String keyPrefix, int rpm, int concurrency, boolean requireActive);
 }

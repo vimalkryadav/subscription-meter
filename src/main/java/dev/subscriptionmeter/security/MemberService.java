@@ -26,6 +26,17 @@ public class MemberService {
                 new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or revoked member key"));
     }
     public List<Member> list() { return members.list(); }
+    public Member find(String id) {
+        return members.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+    }
+    public IssuedKey rotate(String id, int rpm, int concurrency, boolean requireActive) {
+        Member old = find(id);
+        byte[] bytes = new byte[32]; random.nextBytes(bytes);
+        String key = "sm_" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        if(!members.replaceKey(id,hash(key),key.substring(0,10),rpm,concurrency,requireActive))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"Access was revoked");
+        return new IssuedKey(new Member(id,old.name(),key.substring(0,10),true,rpm,concurrency),key);
+    }
     public void revoke(String id) {
         if (!members.revoke(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
     }

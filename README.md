@@ -15,7 +15,8 @@ flowchart LR
     U --> A[Configured upstream]
     G --> D[(TimescaleDB request and event ledger)]
     P[Prometheus] --> G
-    B[Dashboard / admin key] --> T
+    B[Member portal / login] --> T
+    M[Admin console / admin key] --> T
 ```
 
 TimescaleDB stores request summaries, full details, ordered streaming events, and
@@ -76,11 +77,11 @@ The Compose project, containers, network, and volumes are independent of BugPoli
 coder port-forward bugpolice-control --tcp 8180:8180 --tcp 9190:9190
 ```
 
-The dashboard is available at the Cloudflare HTTPS root URL; no port forward is
-needed for normal use. The optional command above gives local maintenance access
+The member portal is available at the Cloudflare HTTPS root URL, and the admin
+console is at `/manage`; no port forward is needed for normal use. The optional command above gives local maintenance access
 at http://localhost:8180 and Prometheus at http://localhost:9190. Only loopback
 ports are published on the workspace, so external access goes through Cloudflare.
-Open the admin key file directly on the workspace (`secrets/admin-token`) and paste it into the dashboard.
+Open the admin key file directly on the workspace (`secrets/admin-token`) and paste it into the admin console.
 The browser holds it in memory, not localStorage. Do not paste it into chat.
 
 Manage the deployment on the workspace:
@@ -97,9 +98,43 @@ do not override Coder template shutdown or inactivity policies. No user autostop
 schedule was shown during initial inspection. A workspace shutdown still stops
 the service. Persistent volumes are local to this workspace.
 
-## Member access
+## Member accounts and access approval
 
-Create a member through the dashboard; save the displayed key once. Only its
+1. Users open the root URL, choose **Create account**, and register a username,
+   name, and password (12–128 characters). Registration signs them in but grants
+   no model access. No email provider or subscription credential is needed.
+2. In the member dashboard they submit **Request access** with a short reason.
+3. The administrator opens `/manage`, signs in with the existing admin key, and
+   approves or rejects the request. Approval sets RPM and concurrency limits.
+4. An approved user signs in and clicks **Get my auth token**. The gateway issues
+   a personal `ANTHROPIC_AUTH_TOKEN`, displays it once, and shows terminal settings.
+5. Users can view their own 30-day usage, sign out, or rotate a lost token.
+   Rotation invalidates the old token immediately and preserves member attribution.
+   Admin revocation blocks both model access and token rotation; a new request
+   and approval are required to restore access. Rejected requests can be resubmitted.
+
+Token requests, decisions, and issuance are serialized per account in database
+transactions. Repeated or concurrent claims cannot issue multiple active tokens.
+Passwords use salted PBKDF2-HMAC-SHA256 with 600,000 iterations. Sessions are random
+opaque cookies (`Secure`, `HttpOnly`, `SameSite=Strict`, host-only, `/portal/api`)
+with hashed server-side storage, a 12-hour absolute lifetime, and a one-hour idle
+limit. Up to five sessions are retained per account. Session IDs rotate on login;
+logout invalidates them. CSRF tokens protect authenticated mutations, while a
+required custom header protects signup/login from form-based cross-origin posts.
+CORS is not enabled. Password hashing concurrency and login attempts are bounded
+per instance. Public portal request bodies are capped at 16 KiB by Caddy.
+
+The portal never accepts a client-supplied account ID for access or usage queries.
+Member sessions and gateway tokens cannot access admin endpoints. Passwords,
+session secrets, and issued keys are not returned in account or approval listings.
+All new tables are additive; existing member keys and captured requests remain.
+
+There is no self-service password reset or email verification in this prototype.
+Use HTTPS for the member portal. `PORTAL_SECURE_COOKIE=false` is only for isolated
+local HTTP development and tests; the deployment uses secure cookies.
+
+The admin console also retains direct member creation for operator-managed keys.
+Only a token's
 SHA-256 hash and short display prefix are stored in PostgreSQL. The key has 256
 bits of random entropy. Revocation blocks new requests; in-flight requests may
 finish. RPM and concurrent-request limits apply to each member. There is also
@@ -155,7 +190,9 @@ Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
 
 | Public path | Purpose | Authentication |
 |---|---|---|
-| `/` | Dashboard sign-in and management interface | Admin key to load data |
+| `/` | Member signup, login, access requests and own usage | Member account session |
+| `/manage` | Admin console and approval queue | Admin key to load data |
+| `/portal/api/*` | Account, session and personal-token APIs | Session + CSRF for authenticated writes |
 | `/admin/*` | Members, analytics, captured requests and events | Admin key |
 | `POST /gateway/v1/messages` | Streaming and non-streaming model requests | Member key |
 | `POST /gateway/v1/messages/count_tokens` | Token counting | Member key |
@@ -165,7 +202,7 @@ Caddy strips `/gateway` before forwarding model requests to the application.
 The original public `/v1/*` paths now return 404; update existing clients to use
 the `/gateway` base URL. Health, metrics, and other paths also return 404 publicly.
 Admin keys cannot be used as member keys, and member keys cannot access admin
-data. The dashboard holds the admin key in browser memory until disconnect or
+data. The admin console holds the admin key in browser memory until disconnect or
 reload. Neither key belongs in a URL. Caddy serves the dashboard from the same
 source file as the application, mounted read-only.
 
@@ -197,6 +234,7 @@ Run the public acceptance test on the workspace:
 
 ```sh
 python3 scripts/tunnel_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
+python3 scripts/portal_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
 ```
 
 The test refuses live upstream mode, verifies dashboard and admin authentication,
@@ -205,7 +243,10 @@ measures event arrival times, completes 20 concurrent mock streams, inspects sto
 requests and events, checks token counting and non-streaming responses, and revokes
 the test key. It also confirms internal and old model routes are blocked.
 Results go to `artifacts/tunnel-smoke.json`
-and are not committed.
+and are not committed. `portal_smoke.py` covers public signup, password login,
+session rotation, approval, one-time issuance, ownership isolation, token rotation,
+revocation, and logout. It leaves identifiable synthetic accounts and revoked test
+access for audit purposes. Results are stored in `artifacts/portal-smoke.json`.
 
 **Observed versus supported behavior:** the initial public test delivered six SSE
 events incrementally (first event 0.462 seconds; final event 2.958 seconds) and

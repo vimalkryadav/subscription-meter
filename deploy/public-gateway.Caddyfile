@@ -14,6 +14,17 @@
         root * /srv
         file_server
     }
+    handle /manage {
+        root * /srv
+        rewrite * /manage.html
+        file_server
+    }
+    handle /portal/api/* {
+        request_body {
+            max_size 16KB
+        }
+        reverse_proxy app:8180
+    }
     handle /admin/* {
         reverse_proxy app:8180
     }

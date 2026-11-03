@@ -41,14 +41,16 @@ local = "http://127.0.0.1:8180"
 status = json.loads(call(local, "/admin/status", admin)[1])
 assert status["mode"] == "mock", "This test must not consume subscription usage"
 code, landing = call(base, "/")
-assert code == 200 and b'Request inspector' in landing and b'id="login"' in landing
+assert code == 200 and b'Member portal' in landing and b'id="authForm"' in landing
+code, dashboard = call(base, "/manage")
+assert code == 200 and b'Request inspector' in dashboard and b'id="login"' in dashboard
 gateway = base + "/gateway"
 for path in ("/actuator/prometheus", "/actuator/health", "/v1/messages", "/v1/models",
              "/gateway/admin/status", "/gateway/actuator/health", "/gateway/v1/messages"):
     code, _ = call(base, path)
     assert code == 404, (path, code)
 assert call(base, "/v1/messages", body={})[0] == 404
-admin_paths = ("/admin/status", "/admin/members", "/admin/analytics", "/admin/requests", "/admin/access",
+admin_paths = ("/admin/status", "/admin/members", "/admin/analytics", "/admin/requests", "/admin/access", "/admin/key-requests",
                "/admin/requests/nonexistent", "/admin/requests/nonexistent/events")
 for path in admin_paths:
     assert call(base, path)[0] == 401, path
