@@ -8,13 +8,14 @@ TimescaleDB on PostgreSQL 18, and Prometheus. The initial deployment uses a loca
 
 ```mermaid
 flowchart LR
-    C[Claude Code / member key] --> T[Named Cloudflare Tunnel]
-    T --> G[Spring Boot gateway]
+    C[Claude Code / member key] --> T[Cloudflare Tunnel]
+    T --> E[Caddy /gateway routing]
+    E --> G[Spring Boot gateway]
     G --> U[Upstream transport]
     U --> A[Configured upstream]
     G --> D[(TimescaleDB request and event ledger)]
     P[Prometheus] --> G
-    B[Private admin dashboard] --> G
+    B[Dashboard / admin key] --> T
 ```
 
 TimescaleDB stores request summaries, full details, ordered streaming events, and
@@ -75,9 +76,11 @@ The Compose project, containers, network, and volumes are independent of BugPoli
 coder port-forward bugpolice-control --tcp 8180:8180 --tcp 9190:9190
 ```
 
-Open http://localhost:8180 for the dashboard and http://localhost:9190 for
-Prometheus. Only loopback ports are published. Open the admin key file directly
-on the workspace (`secrets/admin-token`) and paste it into the dashboard.
+The dashboard is available at the Cloudflare HTTPS root URL; no port forward is
+needed for normal use. The optional command above gives local maintenance access
+at http://localhost:8180 and Prometheus at http://localhost:9190. Only loopback
+ports are published on the workspace, so external access goes through Cloudflare.
+Open the admin key file directly on the workspace (`secrets/admin-token`) and paste it into the dashboard.
 The browser holds it in memory, not localStorage. Do not paste it into chat.
 
 Manage the deployment on the workspace:
@@ -105,7 +108,7 @@ an 80-request global concurrency cap.
 Configure a terminal session after a reachable gateway endpoint is available:
 
 ```sh
-export ANTHROPIC_BASE_URL="https://YOUR_GATEWAY_HOSTNAME"
+export ANTHROPIC_BASE_URL="https://YOUR_GATEWAY_HOSTNAME/gateway"
 export ANTHROPIC_AUTH_TOKEN="YOUR_MEMBER_KEY"
 unset ANTHROPIC_API_KEY
 claude
@@ -113,8 +116,8 @@ claude
 
 These variables authenticate Claude Code to this gateway. They do not establish
 that the upstream subscription path accepts the request. The live experiment
-must verify that independently. The prototype supports only `/v1/messages`,
-`/v1/messages/count_tokens`, and `/v1/models`; additional Claude Code endpoints
+must verify that independently. The public gateway supports only `/gateway/v1/messages`,
+`/gateway/v1/messages/count_tokens`, and `/gateway/v1/models`; additional Claude Code endpoints
 and features may need separate support.
 
 ## Subscription experiment
@@ -148,12 +151,23 @@ needed. The public route is:
 Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
 ```
 
-`deploy/public-gateway.Caddyfile` permits only `POST /v1/messages`,
-`POST /v1/messages/count_tokens`, and `GET /v1/models`. Member authentication is
-still required by the app. The root `/` serves a public landing page with terminal
-connection and private dashboard instructions. Other paths return 404, including
-admin APIs, health, and metrics. The actual dashboard and captured data stay on
-the private Coder port forward.
+`deploy/public-gateway.Caddyfile` separates the dashboard from model requests:
+
+| Public path | Purpose | Authentication |
+|---|---|---|
+| `/` | Dashboard sign-in and management interface | Admin key to load data |
+| `/admin/*` | Members, analytics, captured requests and events | Admin key |
+| `POST /gateway/v1/messages` | Streaming and non-streaming model requests | Member key |
+| `POST /gateway/v1/messages/count_tokens` | Token counting | Member key |
+| `GET /gateway/v1/models` | Model listing | Member key |
+
+Caddy strips `/gateway` before forwarding model requests to the application.
+The original public `/v1/*` paths now return 404; update existing clients to use
+the `/gateway` base URL. Health, metrics, and other paths also return 404 publicly.
+Admin keys cannot be used as member keys, and member keys cannot access admin
+data. The dashboard holds the admin key in browser memory until disconnect or
+reload. Neither key belongs in a URL. Caddy serves the dashboard from the same
+source file as the application, mounted read-only.
 
 On `bugpolice-control`, start the dedicated public proxy and tunnel service:
 
@@ -185,9 +199,12 @@ Run the public acceptance test on the workspace:
 python3 scripts/tunnel_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
 ```
 
-The test refuses live upstream mode, creates a temporary member key, verifies
-private routes are blocked, measures event arrival times, completes 20 concurrent
-mock streams, and revokes the test key. Results go to `artifacts/tunnel-smoke.json`
+The test refuses live upstream mode, verifies dashboard and admin authentication,
+creates a temporary member through the public admin API, checks key separation,
+measures event arrival times, completes 20 concurrent mock streams, inspects stored
+requests and events, checks token counting and non-streaming responses, and revokes
+the test key. It also confirms internal and old model routes are blocked.
+Results go to `artifacts/tunnel-smoke.json`
 and are not committed.
 
 **Observed versus supported behavior:** the initial public test delivered six SSE
@@ -242,8 +259,8 @@ HTTP, and connection-pool metrics are available through authenticated
 
 The dashboard provides paginated requests, a member filter, per-request detail,
 ordered event expansion, access records, and JSON export. Admin authentication
-protects every inspection endpoint. The private Cloudflare ingress template
-continues to expose only model endpoints.
+protects every inspection endpoint, including access through the public
+Cloudflare URL. Model traffic uses the separate `/gateway` path.
 
 Captured fields include:
 
