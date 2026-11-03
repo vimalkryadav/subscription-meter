@@ -51,7 +51,7 @@ for path in ("/actuator/prometheus", "/actuator/health", "/v1/messages", "/v1/mo
     code, _ = call(base, path)
     assert code == 404, (path, code)
 assert call(base, "/v1/messages", body={})[0] == 404
-admin_paths = ("/admin/status", "/admin/members", "/admin/analytics", "/admin/requests", "/admin/access", "/admin/key-requests",
+admin_paths = ("/admin/status", "/admin/members", "/admin/analytics", "/admin/requests", "/admin/access", "/admin/key-requests", "/admin/metrics",
                "/admin/requests/nonexistent", "/admin/requests/nonexistent/events")
 for path in admin_paths:
     assert call(base, path)[0] == 401, path

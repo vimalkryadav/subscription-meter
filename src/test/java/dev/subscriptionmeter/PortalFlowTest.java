@@ -145,6 +145,11 @@ class PortalFlowTest {
             assertThat(mvc.perform(get("/admin/status").header("Authorization","Bearer "+ADMIN)).andReturn().getResponse().getStatus()).isEqualTo(401);
             assertThat(mvc.perform(get("/admin/status").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(200);
             assertThat(mvc.perform(get("/admin/status").cookie(member.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+            assertThat(mvc.perform(get("/admin/metrics")).andReturn().getResponse().getStatus()).isEqualTo(401);
+            assertThat(mvc.perform(get("/admin/metrics").cookie(member.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+            assertThat(mvc.perform(get("/admin/metrics").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(200);
+            assertThat(mvc.perform(get("/admin/metrics").cookie(owner.cookie()).param("hours","10000")).andReturn().getResponse().getStatus()).isEqualTo(400);
+            assertThat(mvc.perform(get("/admin/metrics").cookie(owner.cookie()).param("mode","invalid")).andReturn().getResponse().getStatus()).isEqualTo(400);
             assertThat(json(mvc.perform(get("/portal/api/session").cookie(owner.cookie())).andReturn()).path("user").path("role").asString()).isEqualTo("admin");
             assertThat(mvc.perform(post("/admin/members").cookie(owner.cookie()).contentType("application/json").content("{}")).andReturn().getResponse().getStatus()).isEqualTo(403);
             var created=mvc.perform(post("/admin/members").cookie(owner.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",owner.csrf())

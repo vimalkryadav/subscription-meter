@@ -194,6 +194,7 @@ Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
 |---|---|---|
 | `/` | Member signup, login, access requests and own usage | Member account session |
 | `/manage` | Admin console and approval queue | Admin account session |
+| `/assets/*` | Dashboard CSS and JavaScript; no account data | Public |
 | `/portal/api/*` | Account, session and personal-token APIs | Session + CSRF for authenticated writes |
 | `/admin/*` | Members, analytics, captured requests and events | Admin session + CSRF for writes |
 | `POST /gateway/v1/messages` | Streaming and non-streaming model requests | Member key |
@@ -202,7 +203,7 @@ Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
 
 Caddy strips `/gateway` before forwarding model requests to the application.
 The original public `/v1/*` paths now return 404; update existing clients to use
-the `/gateway` base URL. Health, metrics, and other paths also return 404 publicly.
+the `/gateway` base URL. Internal health and Prometheus endpoints return 404 publicly.
 Admin sessions cannot be used as member keys, and member keys cannot access admin
 data. The same account session is used by the portal and admin console; roles are
 checked from the database on every admin request. Sessions and keys do not belong in URLs. Caddy serves the dashboard from the same
@@ -311,7 +312,12 @@ HTTP, and connection-pool metrics are available through authenticated
 
 ## Full-content request inspector
 
-The dashboard provides paginated requests, a member filter, per-request detail,
+The admin dashboard opens on Metrics, with light/dark themes, window and source filters,
+traffic charts, p50/p95/p99 timings by model, top members/models, errors, and capture
+coverage. Chart values are also available as expandable tables. Activity, member keys,
+access requests, and connection settings have separate navigation entries.
+
+The Activity view provides paginated requests, a member filter, per-request detail,
 ordered event expansion, access records, and JSON export. Admin authentication
 protects every inspection endpoint, including access through the public
 Cloudflare URL. Model traffic uses the separate `/gateway` path.
@@ -368,6 +374,14 @@ batching if traffic substantially exceeds this 20-member experiment.
 
 Admin APIs:
 
+- `GET /admin/metrics?hours=6&mode=all` returns operational summaries, traffic buckets,
+  request-duration and first-response-byte percentiles, top members/models, and error counts.
+  Windows: `1`, `6`, `24`, or `168` hours; modes: `all`, `mock`, or `subscription`.
+  Metrics use the request ledger and captured details in one read-only database snapshot.
+  Percentiles are calculated from request samples, not averages of bucket percentiles.
+  Tokens include input, output, cache creation, and cache reads; missing usage is not
+  zero consumption. Metadata-only requests are included only in the all-mode view.
+  This endpoint requires the same administrator session as the other admin APIs.
 - `GET /admin/requests?days=7&memberId=...&limit=25&offset=0`
 - `GET /admin/requests/{id}`
 - `GET /admin/requests/{id}/events?after=0&limit=100`

@@ -19,6 +19,10 @@
         rewrite * /manage.html
         file_server
     }
+    handle /assets/* {
+        root * /srv
+        file_server
+    }
     handle /portal/api/* {
         request_body {
             max_size 16KB
