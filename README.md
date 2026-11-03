@@ -150,9 +150,10 @@ Cloudflare Quick Tunnel -> 127.0.0.1:8182 (Caddy) -> app:8180
 
 `deploy/public-gateway.Caddyfile` permits only `POST /v1/messages`,
 `POST /v1/messages/count_tokens`, and `GET /v1/models`. Member authentication is
-still required by the app. Everything else returns 404, including the dashboard,
-admin APIs, health, and metrics. Admin access stays on the private Coder port
-forward. The public base URL is an API endpoint, not a dashboard URL.
+still required by the app. The root `/` serves a public landing page with terminal
+connection and private dashboard instructions. Other paths return 404, including
+admin APIs, health, and metrics. The actual dashboard and captured data stay on
+the private Coder port forward.
 
 On `bugpolice-control`, start the dedicated public proxy and tunnel service:
 

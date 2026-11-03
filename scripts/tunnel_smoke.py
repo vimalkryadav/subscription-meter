@@ -40,7 +40,9 @@ def call(origin, path, token="", body=None, method=None):
 local = "http://127.0.0.1:8180"
 status = json.loads(call(local, "/admin/status", admin)[1])
 assert status["mode"] == "mock", "This test must not consume subscription usage"
-for path in ("/", "/admin/status", "/admin/requests", "/actuator/prometheus", "/actuator/health", "/v1/messages"):
+code, landing = call(base, "/")
+assert code == 200 and b"Subscription Meter" in landing
+for path in ("/admin/status", "/admin/requests", "/actuator/prometheus", "/actuator/health", "/v1/messages"):
     code, _ = call(base, path)
     assert code == 404, (path, code)
 assert call(base, "/v1/models")[0] == 401
