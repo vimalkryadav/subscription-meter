@@ -42,8 +42,8 @@ services:
       DATABASE_URL: jdbc:postgresql://timescaledb:5432/meter
       DATABASE_USER: meter
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      UPSTREAM_MODE: ${UPSTREAM_MODE:-mock}
-      UPSTREAM_URL: ${UPSTREAM_URL:-http://mock:8081}
+      UPSTREAM_MODE: subscription
+      UPSTREAM_URL: https://api.anthropic.com
       UPSTREAM_TOKEN_FILE: /run/secrets/upstream-token
       ADMIN_TOKEN_FILE: /run/secrets/admin-token
       METRICS_TOKEN_FILE: /run/secrets/metrics-token
@@ -58,14 +58,6 @@ services:
       timescaledb: {condition: service_healthy}
     mem_limit: 1g
     stop_grace_period: 40s
-  mock:
-    image: python:3.13-slim
-    restart: unless-stopped
-    command: [python, /mock.py]
-    volumes: ["./scripts/mock_upstream.py:/mock.py:ro"]
-    read_only: true
-    user: "10001:10001"
-    mem_limit: 128m
   prometheus:
     image: prom/prometheus:v3.5.0
     restart: unless-stopped

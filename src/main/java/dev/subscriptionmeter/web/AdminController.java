@@ -41,8 +41,8 @@ public class AdminController {
                 "note", "Observed tokens; not subscription allowance or a bill. Partial usage may be incomplete.");
     }
     @GetMapping("/status") public Map<String, Object> status() {
-        boolean configured = mode.equals("mock");
-        try { configured |= Files.isRegularFile(Path.of(tokenFile)) && !Files.readString(Path.of(tokenFile)).isBlank(); }
+        boolean configured = false;
+        try { configured = Files.isRegularFile(Path.of(tokenFile)) && !Files.readString(Path.of(tokenFile)).isBlank(); }
         catch (java.io.IOException ignored) { }
         return Map.of("mode", mode, "credentialConfigured", configured,
                 "subscriptionCompatibility", "unverified", "runtime", Runtime.version().toString(),

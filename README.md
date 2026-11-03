@@ -1,8 +1,10 @@
-# Subscription Meter
+# control-usage
 
 Experimental member-attributed streaming gateway. Java 26, Spring Boot 4.1.2,
-TimescaleDB on PostgreSQL 18, and Prometheus. The initial deployment uses a local mock upstream.
-**Subscription authentication compatibility has not been established by mock tests.**
+TimescaleDB on PostgreSQL 18, and Prometheus. The deployment forwards requests to
+Anthropic using the server-provisioned subscription credential. Mock runtime mode
+and synthetic production records have been retired. Upstream availability and
+successful generation remain subject to the actual provider response.
 
 ## Architecture
 
@@ -56,17 +58,13 @@ Requires JDK 26 and Maven 3.6.3+:
 mvn package
 python3 scripts/bootstrap.py
 docker compose up -d --build
-python3 scripts/smoke.py
-python3 scripts/audit_smoke.py
 ```
 
-`smoke.py` refuses live mode. It creates 20 members, sends simultaneous streamed
-requests, verifies each member's four token counters, then revokes all test keys.
-Synthetic records remain visible under `smoke-...` names. Results are written to
-`artifacts/smoke.json`. Unit tests cover split streams, accounting, disconnects,
-limits, persistence, and errors. Local persistence tests use H2; the acceptance
-tests exercise the deployed TimescaleDB database, including full payloads, tool
-events, errors, redaction, and authentication boundaries.
+Provision `secrets/upstream-token` before sending model requests. There is no mock
+fallback. Unit tests use isolated fixtures and cover split streams, accounting,
+disconnects, limits, persistence, authentication, and upstream configuration.
+`scripts/metrics_smoke.py URL` checks reporting and static routes without making
+model requests; the explicitly invoked `live_smoke.py` performs a bounded real test.
 
 ## Coder deployment
 
@@ -165,8 +163,9 @@ Keychain, or Claude credential files. It does not implement token refresh.
 
 1. Provision the intended credential directly into `secrets/upstream-token` on
    the workspace using a private terminal/editor. Never commit it or send it in chat.
-2. Set `UPSTREAM_MODE=subscription` and `UPSTREAM_URL=https://api.anthropic.com`
-   in the workspace's private `.env` file.
+2. The production Compose service fixes subscription mode and the Anthropic origin.
+   Other upstream modes are rejected, including stale `UPSTREAM_MODE=mock` settings
+   when starting the Java application outside Compose.
 3. Recreate the app container: `sudo docker compose up -d --force-recreate app`.
 4. Use one member and one small request to validate authentication, streaming,
    and accounting before involving the remaining users.
@@ -244,23 +243,16 @@ This prompts for the admin username/password and stores an expiring session in
 The bootstrap bearer key is only accepted before any admin account exists. New
 signups always receive the `member` role; no public endpoint allows self-promotion.
 
-Run the public acceptance tests on the workspace:
+Run the read-only dashboard checks on the workspace:
 
 ```sh
-python3 scripts/tunnel_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
-python3 scripts/portal_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
+python3 scripts/metrics_smoke.py https://YOUR_RANDOM_HOST.trycloudflare.com
 ```
 
-The test refuses live upstream mode, verifies dashboard and admin authentication,
-creates a temporary member through the public admin API, checks key separation,
-measures event arrival times, completes 20 concurrent mock streams, inspects stored
-requests and events, checks token counting and non-streaming responses, and revokes
-the test key. It also confirms internal and old model routes are blocked.
-Results go to `artifacts/tunnel-smoke.json`
-and are not committed. `portal_smoke.py` covers public signup, password login,
-session rotation, approval, one-time issuance, ownership isolation, token rotation,
-revocation, and logout. It leaves identifiable synthetic accounts and revoked test
-access for audit purposes. Results are stored in `artifacts/portal-smoke.json`.
+These checks verify protected admin reporting, bounded time windows, aggregate
+consistency, and public dashboard assets. The old mock server and scripts that
+created synthetic production accounts have been removed. Use `mvn verify` for
+isolated regression tests; production checks do not seed sample traffic.
 
 **Observed versus supported behavior:** the initial public test delivered six SSE
 events incrementally (first event 0.462 seconds; final event 2.958 seconds) and
@@ -312,9 +304,11 @@ HTTP, and connection-pool metrics are available through authenticated
 
 ## Full-content request inspector
 
-The admin dashboard opens on Metrics, with light/dark themes, window and source filters,
+The dark-only admin dashboard opens on Metrics, with time-window controls,
 traffic charts, p50/p95/p99 timings by model, top members/models, errors, and capture
-coverage. Chart values are also available as expandable tables. Activity, member keys,
+coverage. A custom SVG icon identifies control-usage in both portals and browser tabs.
+Activity-window dropdowns use app-styled menus with arrow-key, Home/End, Escape,
+type-ahead, and Tab support. Chart values are also available as expandable tables. Activity, member keys,
 access requests, and connection settings have separate navigation entries.
 
 The Activity view provides paginated requests, a member filter, per-request detail,
@@ -376,7 +370,8 @@ Admin APIs:
 
 - `GET /admin/metrics?hours=6&mode=all` returns operational summaries, traffic buckets,
   request-duration and first-response-byte percentiles, top members/models, and error counts.
-  Windows: `1`, `6`, `24`, or `168` hours; modes: `all`, `mock`, or `subscription`.
+  Windows: `1`, `6`, `24`, or `168` hours; optional modes: `all` or `subscription`.
+  Mock-mode queries are rejected.
   Metrics use the request ledger and captured details in one read-only database snapshot.
   Percentiles are calculated from request samples, not averages of bucket percentiles.
   Tokens include input, output, cache creation, and cache reads; missing usage is not
@@ -423,9 +418,21 @@ subscription mode. It sends one non-streaming request with at most 32 output
 tokens, and only on success sends one streaming request. It checks stored request
 attribution, response capture, usage, events, and test-key revocation. It stops on
 an upstream error without trying alternate identities or automatic retries.
-The mode must be changed by the operator; the script itself does not edit `.env`.
+The script does not change upstream configuration.
 Results are private in `artifacts/live-smoke.json`.
 
 The first live attempt returned HTTP 429 (`rate_limit_error`) from Anthropic.
 Request/error capture and attribution passed, but real generation and streaming
-remain unverified. The deployment was restored to mock mode after that attempt.
+remain unverified. The deployment now stays in subscription mode and returns real
+upstream errors without falling back to synthetic responses.
+
+## Removing the retired mock records
+
+`deploy/remove-mock-data.sql` deletes requests with explicit mock provenance, the
+identified pre-capture smoke batch, and recognized inactive fixture keys/accounts.
+It preserves real subscription history and administrator accounts, and checks those
+invariants before committing. Run it with `psql -v ON_ERROR_STOP=1` only after taking
+a private database backup and stopping the app. Unattributed access rejections are
+retained because their provenance cannot be established. The deployment directory,
+Compose project, and GitHub repository retain their existing `subscription-meter`
+identifiers to keep operational resources stable; the platform name is control-usage.

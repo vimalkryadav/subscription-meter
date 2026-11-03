@@ -26,5 +26,5 @@ if [ "$before" != "$after" ]; then
   exit 1
 fi
 echo "Restored $after historical request records. Backup: $backup"
-docker compose up -d --build app mock prometheus
+docker compose up -d --build app prometheus
 echo "Check application readiness and hypertables before stopping the legacy postgres service."

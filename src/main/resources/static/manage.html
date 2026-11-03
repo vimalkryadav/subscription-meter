@@ -2,18 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Metrics · Subscription Meter</title>
-  <script>try{document.documentElement.dataset.theme=localStorage.getItem('meter-theme')||'light'}catch{}</script>
+  <meta name="theme-color" content="#0d131a">
+  <title>Metrics · control-usage</title>
+  <link rel="icon" href="/assets/control-usage.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/admin.css">
   <script defer src="/assets/charts.js"></script>
+  <script defer src="/assets/dropdown.js"></script>
   <script defer src="/assets/admin.js"></script>
   <script defer src="/assets/metrics.js"></script>
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
 <header class="topbar">
-  <a class="brand" href="/manage"><span class="brand-mark" aria-hidden="true">M</span>Subscription Meter</a>
-  <div class="account" id="login"><button type="button" id="theme" aria-label="Switch color theme">Dark theme</button><span id="adminIdentity">Checking your account…</span><a id="signIn" href="/">Sign in</a><button type="button" id="logout" hidden>Sign out</button></div>
+  <a class="brand" href="/manage"><img class="brand-icon" src="/assets/control-usage.svg" width="30" height="30" alt="">control-usage</a>
+  <div class="account" id="login"><span id="adminIdentity">Checking your account…</span><a id="signIn" href="/">Sign in</a><button type="button" id="logout" hidden>Sign out</button></div>
 </header>
 <aside class="sidebar" aria-label="Admin navigation">
   <p class="nav-label">WORKSPACE</p>
@@ -34,7 +36,6 @@
       <div class="toolbar">
         <div class="segments" role="group" aria-label="Metrics time window" id="metricWindows"><button data-hours="1" aria-pressed="false">1 h</button><button data-hours="6" aria-pressed="true">6 h</button><button data-hours="24" aria-pressed="false">24 h</button><button data-hours="168" aria-pressed="false">7 d</button></div>
         <div class="segments" role="group" aria-label="Timing percentile" id="metricPercentiles"><button data-percentile="p50" aria-pressed="false">p50</button><button data-percentile="p95" aria-pressed="true">p95</button><button data-percentile="p99" aria-pressed="false">p99</button></div>
-        <label class="inline-label">Source <select id="metricMode"><option value="all">All recorded modes</option><option value="subscription">Subscription only</option><option value="mock">Mock only</option></select></label>
         <span id="metricsUpdated" class="muted" aria-live="polite">Loading metrics…</span>
       </div>
       <div id="metricsError" class="notice" role="alert" hidden></div>
@@ -47,17 +48,27 @@
         </div>
         <h2 class="section-title">Traffic</h2>
         <div class="grid thirds"><article class="panel chart"><h3>Requests per interval</h3><div id="requestsChart"></div></article><article class="panel chart"><h3>Tokens per interval</h3><div id="tokensChart"></div></article><article class="panel chart"><h3>Failed / incomplete per interval</h3><div id="failuresChart"></div></article></div>
-        <div class="section-heading"><h2 class="section-title">Who used the gateway</h2><span class="muted">Top 10 · selected window and source</span></div>
+        <div class="section-heading"><h2 class="section-title">Who used the gateway</h2><span class="muted">Top 10 · selected window</span></div>
         <div class="grid halves"><article class="panel"><h3>Top members / keys</h3><div class="table-scroll"><table><thead><tr><th>Member</th><th>Requests</th><th>Tokens</th></tr></thead><tbody id="topMembers"></tbody></table></div></article><article class="panel"><h3>Top models</h3><div class="table-scroll"><table><thead><tr><th>Model</th><th>Requests</th><th>Tokens</th></tr></thead><tbody id="topModels"></tbody></table></div></article></div>
         <h2 class="section-title">Request timings by model</h2>
         <div class="grid halves"><article class="panel chart"><h3 id="latencyTitle">Request duration · p95</h3><div id="latencyChart"></div></article><article class="panel chart"><h3 id="firstByteTitle">First response byte · p95</h3><div id="firstByteChart"></div></article></div>
         <p class="muted">First byte measures response bytes received from upstream; it does not measure the first generated token. Gaps mean no timing samples.</p>
-        <div class="grid halves"><article class="panel"><h3>Errors and incomplete requests</h3><table><thead><tr><th>HTTP status</th><th>Outcome</th><th>Requests</th></tr></thead><tbody id="metricErrors"></tbody></table></article><article class="panel"><h3>Capture coverage</h3><dl class="coverage"><div><dt>Usage reported by upstream</dt><dd id="usageCoverage">—</dd></div><div><dt>Truncated captures</dt><dd id="truncatedCaptures">—</dd></div><div><dt>Metadata only</dt><dd id="metadataOnly">—</dd></div></dl><p class="muted">Missing usage is not zero consumption. Token totals can be partial for interrupted responses. Source filters exclude requests whose mode metadata is unavailable.</p></article></div>
+        <div class="grid halves"><article class="panel"><h3>Errors and incomplete requests</h3><table><thead><tr><th>HTTP status</th><th>Outcome</th><th>Requests</th></tr></thead><tbody id="metricErrors"></tbody></table></article><article class="panel"><h3>Capture coverage</h3><dl class="coverage"><div><dt>Usage reported by upstream</dt><dd id="usageCoverage">—</dd></div><div><dt>Truncated captures</dt><dd id="truncatedCaptures">—</dd></div><div><dt>Metadata only</dt><dd id="metadataOnly">—</dd></div></dl><p class="muted">Missing usage is not zero consumption. Token totals can be partial for interrupted responses.</p></article></div>
       </div>
     </section>
     <section data-page="activity" hidden>
       <div class="page-heading"><div><p class="eyebrow">REQUEST AUDIT</p><h1>Activity</h1><p>Inspect captured requests, responses, and ordered streaming events.</p></div><button id="refresh">Refresh activity</button></div>
-      <div class="toolbar"><label class="inline-label">Activity window <select id="days"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select></label></div>
+      <div class="toolbar"><div class="inline-label"><span id="activityWindowLabel">Activity window</span>
+        <div class="dropdown" data-dropdown>
+          <input id="days" type="hidden" value="7">
+          <button type="button" class="dropdown-trigger" id="daysTrigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="daysOptions" aria-labelledby="activityWindowLabel daysValue"><span id="daysValue" data-dropdown-value>Last 7 days</span><span class="dropdown-chevron" aria-hidden="true"></span></button>
+          <div id="daysOptions" class="dropdown-menu" role="listbox" aria-labelledby="activityWindowLabel" hidden>
+            <button type="button" role="option" data-value="1" aria-selected="false" tabindex="-1">Last 24 hours</button>
+            <button type="button" role="option" data-value="7" aria-selected="true" tabindex="-1">Last 7 days</button>
+            <button type="button" role="option" data-value="30" aria-selected="false" tabindex="-1">Last 30 days</button>
+          </div>
+        </div>
+      </div></div>
       <section class="panel"><h2>Request inspector</h2><p class="muted">Credentials are filtered. Older requests may have metadata only.</p><div class="bar"><input id="memberFilter" placeholder="Filter by member ID" aria-label="Member ID filter"><button id="filterRequests">Apply filter</button><button id="previousRequests">Previous</button><button id="nextRequests">Next</button><span id="requestPage" class="muted"></span></div><div class="table-scroll"><table><thead><tr><th>Started / member</th><th>Model</th><th>Status</th><th>Duration</th><th>Capture</th><th></th></tr></thead><tbody id="requests"></tbody></table></div></section>
       <section class="panel" id="requestDetail" hidden><div class="bar"><h2>Request detail</h2><button id="exportRequest">Export JSON</button></div><pre id="detailMetadata"></pre><details open><summary>Request payload</summary><pre id="requestPayload"></pre></details><details><summary>Request and response headers</summary><pre id="detailHeaders"></pre></details><details open><summary>Response payload</summary><pre id="responsePayload"></pre></details><h2>Streaming events</h2><p class="muted" id="eventCount"></p><div id="events"></div><button id="moreEvents">Load more events</button></section>
       <section class="panel"><h2>Usage by member</h2><p class="muted">Activity window above. Cached tokens are separate from ordinary input tokens.</p><div class="table-scroll"><table><thead><tr><th>Member / model</th><th>State</th><th>Requests</th><th>Input</th><th>Output</th><th>Cache write</th><th>Cache read</th></tr></thead><tbody id="usage"></tbody></table></div></section>
@@ -75,7 +86,7 @@
     <section data-page="connection" hidden>
       <div class="page-heading"><div><p class="eyebrow">GATEWAY SETTINGS</p><h1>Connection</h1><p>Connect a member’s terminal to the gateway.</p></div></div>
       <section class="panel"><h2>Claude Code settings</h2><pre id="connection"></pre><p class="muted">Use the member’s platform key. The upstream credential stays on the server.</p></section>
-      <section class="panel"><h2>Gateway status</h2><p id="status" class="muted"></p><p class="muted">The mode in the sidebar is the current upstream. Metrics can include historical requests from both modes.</p></section>
+      <section class="panel"><h2>Gateway status</h2><p id="status" class="muted"></p><p class="muted">Requests are forwarded to Anthropic using the credential provisioned on the server.</p></section>
     </section>
   </main>
 </div>

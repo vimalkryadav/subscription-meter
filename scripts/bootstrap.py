@@ -21,5 +21,5 @@ if not env.exists():
     fd = os.open(env, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as file:
         file.write("DATABASE_PASSWORD=" + secrets.token_urlsafe(40) + "\n")
-        file.write("UPSTREAM_MODE=mock\nUPSTREAM_URL=http://mock:8081\n")
-print("Secret files ready. Upstream remains in mock mode; credentials were not printed.")
+        file.write("UPSTREAM_MODE=subscription\nUPSTREAM_URL=https://api.anthropic.com\n")
+print("Secret files ready. Provision the upstream credential before using the gateway. Credentials were not printed.")

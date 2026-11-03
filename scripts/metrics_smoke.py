@@ -30,6 +30,8 @@ for path, marker, mime in (
     ("/assets/admin.js", b"connectAdmin", "javascript"),
     ("/assets/charts.js", b"MeterCharts", "javascript"),
     ("/assets/metrics.js", b"refreshMetrics", "javascript"),
+    ("/assets/dropdown.js", b"data-dropdown", "javascript"),
+    ("/assets/control-usage.svg", b"control-usage", "image/svg+xml"),
 ):
     code, headers, data = read(path, False)
     assert code == 200 and marker in data and mime in headers.get("Content-Type", ""), path
@@ -37,9 +39,12 @@ for path, marker, mime in (
 assert read("/admin/metrics", False)[0] == 401
 assert read("/admin/metrics?hours=10000")[0] == 400
 assert read("/admin/metrics?mode=invalid")[0] == 400
+assert read("/admin/metrics?mode=mock")[0] == 400
+code, _, data = read("/admin/status")
+assert code == 200 and json.loads(data)["mode"] == "subscription"
 checked = 0
 for hours in (1, 6, 24, 168):
-    for mode in ("all", "mock", "subscription"):
+    for mode in ("all", "subscription"):
         code, _, data = read(f"/admin/metrics?hours={hours}&mode={mode}")
         assert code == 200, (hours, mode, code)
         report = json.loads(data)

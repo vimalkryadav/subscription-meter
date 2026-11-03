@@ -7,11 +7,9 @@ function showPage() {
   const page=allowed.includes(target)?target:'metrics';
   document.querySelectorAll('[data-page]').forEach(section=>section.hidden=section.dataset.page!==page);
   document.querySelectorAll('#navigation a').forEach(link=>{if(link.hash==='#view/'+page)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
-  document.title=(page==='members'?'Members & keys':page==='approvals'?'Access requests':page[0].toUpperCase()+page.slice(1))+' · Subscription Meter';
+  document.title=(page==='members'?'Members & keys':page==='approvals'?'Access requests':page[0].toUpperCase()+page.slice(1))+' · control-usage';
 }
 addEventListener('hashchange',()=>{showPage();window.scrollTo(0,0);});showPage();
-function updateTheme(){ $('theme').textContent=document.documentElement.dataset.theme==='dark'?'Light theme':'Dark theme'; }
-$('theme').onclick=()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;try{localStorage.setItem('meter-theme',theme)}catch{}updateTheme();};updateTheme();
 
 function populateTable(id,rows,columns) {
   const body=$(id);body.replaceChildren();
@@ -56,7 +54,7 @@ async function refreshMetrics() {
   $('metricsData').setAttribute('aria-busy','true');$('metricsData').hidden=true;
   $('metricsError').hidden=true;$('metricsUpdated').textContent='Loading metrics…';
   try{
-    const report=await api('/admin/metrics?hours='+metricHours+'&mode='+encodeURIComponent($('metricMode').value));
+    const report=await api('/admin/metrics?hours='+metricHours);
     if(version!==metricsVersion)return;
     metricReport=report;renderMetrics();$('metricsData').hidden=false;
     $('metricsUpdated').textContent='Updated '+new Date(report.to).toLocaleTimeString()+' · '+report.stepSeconds/60+' min intervals';
@@ -64,7 +62,6 @@ async function refreshMetrics() {
   finally{if(version===metricsVersion)$('metricsData').setAttribute('aria-busy','false');}
 }
 $('refreshMetrics').onclick=refreshMetrics;
-$('metricMode').onchange=refreshMetrics;
 for(const button of $('metricWindows').querySelectorAll('button'))button.onclick=()=>{
   metricHours=Number(button.dataset.hours);
   for(const item of $('metricWindows').querySelectorAll('button'))item.setAttribute('aria-pressed',String(item===button));

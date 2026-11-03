@@ -15,7 +15,7 @@ public class MetricsController {
 
     @GetMapping("/metrics") public MetricsReader.Report metrics(
             @RequestParam(defaultValue="6") int hours,@RequestParam(defaultValue="all") String mode) {
-        if (!Set.of(1,6,24,168).contains(hours) || !Set.of("all","mock","subscription").contains(mode))
+        if (!Set.of(1,6,24,168).contains(hours) || !Set.of("all","subscription").contains(mode))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Unsupported metrics window or mode");
         int step = switch(hours) { case 1 -> 60; case 6 -> 300; case 24 -> 900; default -> 3600; };
         Instant to=Instant.now();

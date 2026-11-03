@@ -27,7 +27,7 @@ public class JdkUpstreamTransport implements UpstreamTransport {
         if (uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null
                 || (uri.getPath() != null && !uri.getPath().isEmpty())
                 || !Set.of("http", "https").contains(uri.getScheme())) throw new IllegalArgumentException("Bare upstream origin required");
-        if (mode.equals("subscription") && !this.origin.equals("https://api.anthropic.com"))
+        if (!mode.equals("subscription") || !this.origin.equals("https://api.anthropic.com"))
             throw new IllegalArgumentException("Subscription upstream must be https://api.anthropic.com");
     }
     public Reply send(String method, String path, Map<String, String> headers, byte[] body) throws IOException, InterruptedException {
