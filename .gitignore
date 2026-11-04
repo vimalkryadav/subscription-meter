@@ -18,3 +18,5 @@ backups/
 deploy/state/
 src/main/resources/static/releases/
 src/main/resources/static/assets/releases/
+
+frontend/node_modules/

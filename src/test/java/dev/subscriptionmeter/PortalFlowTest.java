@@ -175,7 +175,7 @@ class PortalFlowTest {
             var page=mvc.perform(get("/manage").cookie(owner.cookie())).andReturn().getResponse();
             assertThat(page.getStatus()).isEqualTo(200);
             assertThat(page.getHeader("Cache-Control")).contains("no-store");
-            assertThat(page.getContentAsString()).contains("metricsData","control-usage");
+            assertThat(page.getContentAsString()).contains("id=\"root\"","control-usage","/assets/react/");
             assertThat(mvc.perform(get("/manage.html")).andReturn().getResponse().getStatus()).isEqualTo(404);
             sessions.logout(owner.cookie().getValue());
             assertThat(mvc.perform(get("/manage").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(303);

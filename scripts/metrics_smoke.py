@@ -1,6 +1,7 @@
 """Read-only checks for the deployed admin dashboard; provision an admin session first."""
 import argparse
 import json
+import re
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -30,17 +31,17 @@ def read(path, authenticated=True):
         return response.status, response.headers, response.read()
 
 
-for path, marker, mime in (
-    ("/manage", b'id="metricsData"', "text/html"),
-    ("/assets/admin.css", b".sidebar", "text/css"),
-    ("/assets/admin.js", b"connectAdmin", "javascript"),
-    ("/assets/charts.js", b"MeterCharts", "javascript"),
-    ("/assets/metrics.js", b"refreshMetrics", "javascript"),
-    ("/assets/dropdown.js", b"data-dropdown", "javascript"),
-    ("/assets/control-usage.svg", b"control-usage", "image/svg+xml"),
-):
-    code, headers, data = read(path, path == "/manage")
-    assert code == 200 and marker in data and mime in headers.get("Content-Type", ""), path
+for page in ('/', '/manage'):
+    code, headers, html = read(page, page == '/manage')
+    assert code == 200 and b'id="root"' in html and 'text/html' in headers.get('Content-Type', ''), page
+    assets = re.findall(rb'(?:src|href)="(/assets/[^"]+)"', html)
+    assert any(b'/react/' in asset and asset.endswith(b'.js') for asset in assets), page
+    assert any(b'/react/' in asset and asset.endswith(b'.css') for asset in assets), page
+    for asset in assets:
+        path = asset.decode()
+        code, headers, data = read(path, False)
+        mime = 'javascript' if path.endswith('.js') else 'text/css' if path.endswith('.css') else 'image/svg+xml'
+        assert code == 200 and data and mime in headers.get('Content-Type', ''), path
 
 assert read("/admin/metrics", False)[0] == 401
 for path in ("/manage", "/manage/"):

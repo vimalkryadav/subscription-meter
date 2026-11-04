@@ -15,5 +15,19 @@
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
     <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
   </dependencies>
-  <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
+  <build>
+    <resources>
+      <resource><directory>src/main/resources</directory><excludes><exclude>static/index.html</exclude><exclude>admin/manage.html</exclude></excludes></resource>
+      <resource><directory>${project.build.directory}/frontend-resources</directory></resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.6.4</version>
+        <configuration><workingDirectory>${project.basedir}/frontend</workingDirectory></configuration>
+        <executions>
+          <execution><id>frontend-install</id><phase>generate-resources</phase><goals><goal>exec</goal></goals><configuration><executable>npm</executable><arguments><argument>ci</argument><argument>--ignore-scripts</argument><argument>--no-fund</argument></arguments></configuration></execution>
+          <execution><id>frontend-build</id><phase>generate-resources</phase><goals><goal>exec</goal></goals><configuration><executable>npm</executable><arguments><argument>run</argument><argument>build</argument></arguments></configuration></execution>
+          <execution><id>frontend-tests</id><phase>test</phase><goals><goal>exec</goal></goals><configuration><executable>npm</executable><arguments><argument>test</argument></arguments></configuration></execution>
+        </executions>
+      </plugin><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
 </project>

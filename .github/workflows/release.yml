@@ -29,12 +29,11 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: maven
-      - run: mvn --batch-mode --no-transfer-progress verify
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: mvn --batch-mode --no-transfer-progress verify
       - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - run: node --test src/test/js/*.test.cjs
       - run: bash -n scripts/receive_release.sh
       - name: Start isolated audit dependencies
         run: docker compose -p control-usage-test -f compose.audit-test.yaml up -d --wait --wait-timeout 120

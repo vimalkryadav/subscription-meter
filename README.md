@@ -1,7 +1,7 @@
 # control-usage
 
 Experimental member-attributed streaming gateway. Java 26, Spring Boot 4.1.2,
-TimescaleDB on PostgreSQL 18, and Prometheus. The deployment forwards requests to
+TimescaleDB on PostgreSQL 18, Prometheus, and a React + TypeScript frontend. The deployment forwards requests to
 Anthropic using the server-provisioned subscription credential. Mock runtime mode
 and synthetic production records have been retired. Upstream availability and
 successful generation remain subject to the actual provider response.
@@ -59,7 +59,7 @@ stream. JDBC compatibility mode retains its earlier best-effort response capture
 
 ## Build and test
 
-Requires JDK 26 and Maven 3.6.3+:
+Requires JDK 26, Maven 3.6.3+, and Node.js 22.13+ with npm. Maven installs the locked frontend dependencies, type-checks and builds both React entries, and runs frontend contract tests:
 
 ```sh
 mvn package
@@ -68,6 +68,28 @@ docker compose up -d timescaledb
 python3 scripts/migrate.py --apply --timescale
 docker compose up -d --build app
 ```
+
+The frontend source is in `frontend/src`: separate member and administrator apps
+share a typed, same-origin API client. Feature components own display state; API
+services own transport and CSRF handling. The production build contains only static
+assets inside the Spring Boot jar, so no Node service is needed on Coder. Admin
+HTML is packaged outside the public static directory; existing server-side session
+and role checks still protect `/manage` and every admin API. Deployment fingerprints
+assets by release, including relative module imports, so existing tabs survive a
+blue/green switch.
+
+For frontend development, run the Spring app on loopback port 8080, then:
+
+```sh
+cd frontend
+npm ci --ignore-scripts
+npm run dev
+```
+
+The dev server proxies `/portal` and `/admin` to that loopback backend. Use only
+local test credentials during development. `npm run build` type-checks and creates
+`target/frontend-resources`; `npm test` verifies API and packaging contracts after
+a build. Production installs use the committed lockfile and include no mock data.
 
 Provision `secrets/upstream-token` before sending model requests. There is no mock
 fallback. Unit tests use isolated fixtures and cover split streams, accounting,
