@@ -21,12 +21,32 @@ CADDY_IMAGE="caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad921
 
 
 def command(args,check=True,**kwargs):
-    return subprocess.run(args,cwd=ROOT,text=True,capture_output=True,check=check,timeout=300,**kwargs)
+    return subprocess.run(args,cwd=ROOT,text=True,capture_output=True,check=check,timeout=kwargs.pop("timeout",300),**kwargs)
 
 
 def port(container,internal):
     mapping=json.loads(command(["docker","inspect",container]).stdout)[0]["NetworkSettings"]["Ports"]
     return int(mapping[str(internal)+"/tcp"][0]["HostPort"])
+
+
+def wait_database(container,timeout=60):
+    # PostgreSQL images use a temporary Unix-socket server while initializing.
+    # Wait for final TCP service AND the actual application database before migrations.
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        try:
+            ready=command(["docker","exec",container,"pg_isready","-h","127.0.0.1","-p","5432","-U","meter","-d","meter","-t","2"],
+                          check=False,timeout=min(5,max(.1,deadline-time.monotonic())))
+            if ready.returncode==0:
+                query=command(["docker","exec","-e","PGCONNECT_TIMEOUT=2",container,"psql","-X","-qAt","-h","127.0.0.1","-p","5432",
+                               "-v","ON_ERROR_STOP=1","-U","meter","-d","meter","-c","SELECT 1"],
+                              check=False,timeout=min(5,max(.1,deadline-time.monotonic())))
+                if query.returncode==0 and query.stdout.strip()=="1":return
+        except subprocess.TimeoutExpired:
+            pass
+        remaining=deadline-time.monotonic()
+        if remaining>0:time.sleep(min(1,remaining))
+    raise RuntimeError("Isolated PostgreSQL meter database did not become ready over TCP before the deadline")
 
 
 def main():
@@ -45,10 +65,7 @@ def main():
                  "-e","POSTGRES_HOST_AUTH_METHOD=trust","-e","POSTGRES_USER=meter","-e","POSTGRES_DB=meter",
                  "-e","TS_TUNE_MEMORY=512MB","-e","TS_TUNE_NUM_CPUS=1","-e","TS_TUNE_MAX_CONNS=30",
                  "--memory","768m",image])
-        for _ in range(60):
-            if command(["docker","exec",pg,"pg_isready","-U","meter"],check=False).returncode==0:
-                break
-            time.sleep(1)
+        wait_database(pg)
         sql=command(["python3","scripts/migrate.py"]+(["--timescale"] if args.timescale else [])).stdout
         psql=["docker","exec","-i",pg,"psql","-X","-v","ON_ERROR_STOP=1","-U","meter","-d","meter"]
         command(psql,input=sql)
