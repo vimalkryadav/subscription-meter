@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly control-usage committed Kafka history maintenance
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+Unit=control-usage-audit-maintenance.service
+
+[Install]
+WantedBy=timers.target

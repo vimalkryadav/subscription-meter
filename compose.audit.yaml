@@ -1,5 +1,22 @@
 # Opt-in only. Apply migrations and pass the isolated replay/load gates before enabling transport.
 services:
+  audit-volume-init:
+    image: apache/kafka:4.2.0
+    profiles: [audit]
+    user: "0:0"
+    entrypoint: [/bin/sh]
+    command:
+      - -ec
+      - |
+        chown 1000:1000 /audit-data
+        chmod 0700 /audit-data
+    volumes: [audit-kafka-data:/audit-data]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
   audit-kafka:
     image: apache/kafka:4.2.0
     profiles: [audit]
@@ -23,6 +40,8 @@ services:
       KAFKA_MESSAGE_MAX_BYTES: 524288
       KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
     volumes: [audit-kafka-data:/tmp/kraft-combined-logs]
+    depends_on:
+      audit-volume-init: {condition: service_completed_successfully}
     healthcheck:
       test: [CMD, /opt/kafka/bin/kafka-broker-api-versions.sh, --bootstrap-server, audit-kafka:9092]
       interval: 15s

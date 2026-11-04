@@ -1,0 +1,12 @@
+[Unit]
+Description=Prune committed control-usage Kafka history older than 24 hours
+After=docker.service
+
+[Service]
+Type=oneshot
+User=coder
+WorkingDirectory=/home/coder/control-usage-deploy
+Environment=CONTROL_USAGE_DOCKER_SUDO=1
+Environment=CONTROL_USAGE_RUNTIME_ROOT=/home/coder/subscription-meter
+ExecStart=/usr/bin/python3 /home/coder/control-usage-deploy/scripts/maintain_audit.py
+TimeoutStartSec=90

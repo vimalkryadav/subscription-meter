@@ -13,6 +13,17 @@ Gateway settings:
 
 The producer uses explicit fixed partition mapping by request ID. Every gateway color must use the same partition count. Change it only after draining all producers and catching up all consumer partitions. Provision the topic explicitly, with a maximum message size of at least 524288 bytes, adequate retention, and disk monitoring. The worker does not auto-create topics.
 
+The Kafka overlay runs `audit-volume-init` before the broker: the same Kafka image changes only the dedicated volume's top directory to UID/GID1000 and mode0700. It runs as root with only `CHOWN`/`FOWNER`, a read-only root filesystem, no network, and no secret/host-directory mounts. It never recursively changes existing log files. This initializes a fresh Docker named volume that may otherwise be root-owned and unwritable by the Kafka user.
+
+When manually starting the broker with `--no-deps`, initialize its new volume explicitly first, because that flag skips the dependency:
+
+```sh
+docker compose --profile audit -f compose.yaml -f compose.audit.yaml \
+  run --rm --no-deps audit-volume-init
+```
+
+For recovery from a failed first start, stop only the new `audit-kafka` service before this step, then start it again. Keep the existing gateway, database, edge, tunnel and other workspace services running. Inspect unexpected ownership of existing payload files separately; this initializer deliberately does not repair their permissions.
+
 Launch the independent worker from the packaged executable jar:
 
 ```sh
@@ -56,3 +67,15 @@ docker compose -p control-usage-test -f compose.audit-test.yaml down -v
 ```
 
 The integration fixture binds only localhost ports 29092 and 25432. It creates a unique topic and PostgreSQL schema, publishes a multi-part generated body plus stream event, capture completion and terminal usage result. It projects earlier operations, simulates an unreachable projection database for the already acknowledged terminal result, closes without committing Kafka offsets, then verifies replay restores usage and does not duplicate earlier projections. It also checks transaction rollback for unsupported operations. No real provider requests or production mock mode are involved.
+
+## Scheduled committed-history maintenance
+
+`deploy/control-usage-audit-maintenance.timer` invokes `scripts/maintain_audit.py`
+hourly on the Coder host. The script requires a stable Kafka deployment and the
+pinned running worker, serializes its own invocations, and runs only
+`--prune-committed`: it keeps 24 hours of Kafka history and never advances beyond
+the canonical worker's committed offsets. Database capture is unaffected. The
+service has a 90-second timeout, requires no provider credential, and skips
+unconfigured/JDBC deployments or a deployment currently switching. Install only
+these named units; do not modify other workspace services. Disk/backlog guards
+still apply if the queue reaches its capacity before the history window expires.

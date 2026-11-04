@@ -66,6 +66,8 @@ All deployment commands load the base, blue-green and audit overlays. Profiles m
 
 To enable Kafka later, separately provision the internal broker/topic, run the `audit-group-init` one-shot with profile `audit-bootstrap`, and start the pinned worker. Group initialization has no database/provider credentials and must refuse reinitializing an existing group or starting after a nonzero retained earliest offset. Broker/topic automatic deletion is disabled; the producer's backlog/log-size/free-space guard stops forwarding before the configured budget is exhausted. This avoids silently aging out acknowledged, unprojected events. Disk-pressure cleanup is an explicit reconciliation task, never automatic pruning.
 
+The broker depends on the one-shot `audit-volume-init`, which prepares only the named volume's top-directory ownership/mode for Kafka UID1000. Manual `--no-deps` startup skips this dependency: first run `docker compose --profile audit -f compose.yaml -f compose.audit.yaml run --rm --no-deps audit-volume-init`. If the new broker already failed because its fresh volume is root-owned, stop only that broker for this initialization and restart it afterward. The initializer has no network or secrets and does not recursively modify existing payload files; no gateway, database, Caddy, tunnel or BugPolice restart is needed.
+
 After the Kafka acceptance gates and worker readiness pass, record a reviewed audit cohort in the existing release manifest:
 
 ```json
