@@ -11,7 +11,7 @@ import tools.jackson.databind.json.JsonMapper;
 public class CredentialRedactor {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final Pattern SENSITIVE = Pattern.compile("(?i).*(authorization|cookie|api[-_]?key|password|passwd|secret|access[-_]?token|refresh[-_]?token|id[-_]?token|credential).*|(?i)^token$");
-    private static final Pattern KEYS = Pattern.compile("(?i)(?:sk-ant-[a-z0-9_-]{12,}|sm_[a-z0-9_-]{30,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|AKIA[A-Z0-9]{16}|eyJ[a-z0-9_-]+\\.[a-z0-9_-]+\\.[a-z0-9_-]+)");
+    private static final Pattern KEYS = Pattern.compile("(?i)(?:sk-ant-[a-z0-9_-]{12,}|sk-(?:proj-|svcacct-)?[a-z0-9_-]{20,}|sm_[a-z0-9_-]{30,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|AKIA[A-Z0-9]{16}|eyJ[a-z0-9_-]+\\.[a-z0-9_-]+\\.[a-z0-9_-]+)");
     private static final Pattern BEARER = Pattern.compile("(?i)Bearer\\s+[a-z0-9._~+/-]+=*");
     private static final Pattern ASSIGNMENT = Pattern.compile("(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)[\\\"']?\\s*[=:]\\s*[\\\"']?)([^\\s\\\"',;}]+)");
     private static final Pattern PRIVATE_KEY = Pattern.compile("(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----");

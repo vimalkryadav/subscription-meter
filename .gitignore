@@ -13,3 +13,8 @@ target/
 ._*
 .DS_Store
 backups/
+
+# Runtime deployment manifests, immutable assets and local locks.
+deploy/state/
+src/main/resources/static/releases/
+src/main/resources/static/assets/releases/

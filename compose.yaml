@@ -52,12 +52,17 @@ services:
       AUDIT_METADATA_RETENTION_DAYS: ${AUDIT_METADATA_RETENTION_DAYS:-90}
       AUDIT_MAX_RESPONSE_BYTES: ${AUDIT_MAX_RESPONSE_BYTES:-8388608}
       AUDIT_MAX_EVENTS: ${AUDIT_MAX_EVENTS:-10000}
+      METER_AUDIT_TRANSPORT: ${METER_AUDIT_TRANSPORT:-jdbc}
+      METER_AUDIT_KAFKA_BOOTSTRAP_SERVERS: ${METER_AUDIT_KAFKA_BOOTSTRAP_SERVERS:-audit-kafka:9092}
+      METER_AUDIT_KAFKA_TOPIC: ${METER_AUDIT_KAFKA_TOPIC:-control-usage.audit.v1}
+      METER_AUDIT_KAFKA_GROUP: ${METER_AUDIT_KAFKA_GROUP:-control-usage-audit-v1}
+      METER_AUDIT_KAFKA_PARTITIONS: ${METER_AUDIT_KAFKA_PARTITIONS:-1}
     secrets: [admin-token, metrics-token, upstream-token]
     ports: ["127.0.0.1:8180:8180"]
     depends_on:
       timescaledb: {condition: service_healthy}
     mem_limit: 1g
-    stop_grace_period: 40s
+    stop_grace_period: 370s
   prometheus:
     image: prom/prometheus:v3.5.0
     restart: unless-stopped

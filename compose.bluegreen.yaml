@@ -1,0 +1,30 @@
+# Overlay only after the explicit compatibility/bootstrap checklist has passed.
+services:
+  app-blue:
+    extends:
+      file: compose.yaml
+      service: app
+    profiles: [bluegreen]
+    image: ${BLUE_IMAGE:-control-usage-unconfigured}
+    build: !reset null
+    ports: !override ["127.0.0.1:8183:8180"]
+    environment:
+      RELEASE_ID: ${BLUE_RELEASE:-unconfigured}
+      DEPLOY_TOKEN_FILE: /run/secrets/deploy-token
+    secrets: [deploy-token]
+    stop_grace_period: 370s
+  app-green:
+    extends:
+      file: compose.yaml
+      service: app
+    profiles: [bluegreen]
+    image: ${GREEN_IMAGE:-control-usage-unconfigured}
+    build: !reset null
+    ports: !override ["127.0.0.1:8184:8180"]
+    environment:
+      RELEASE_ID: ${GREEN_RELEASE:-unconfigured}
+      DEPLOY_TOKEN_FILE: /run/secrets/deploy-token
+    secrets: [deploy-token]
+    stop_grace_period: 370s
+secrets:
+  deploy-token: {file: ./secrets/deploy-token}

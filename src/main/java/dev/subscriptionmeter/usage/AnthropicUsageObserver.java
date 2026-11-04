@@ -3,6 +3,8 @@ package dev.subscriptionmeter.usage;
 import dev.subscriptionmeter.domain.Usage;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -14,6 +16,7 @@ public final class AnthropicUsageObserver implements UsageObserver {
     private final ByteArrayOutputStream line = new ByteArrayOutputStream();
     private final StringBuilder event = new StringBuilder();
     private long input, output, creation, read;
+    private final Map<String, Long> components = new LinkedHashMap<>();
     private boolean seen, stopped, error, malformed;
     public AnthropicUsageObserver(boolean streaming) { this.streaming = streaming; }
     public void accept(byte[] bytes, int length) {
@@ -59,8 +62,23 @@ public final class AnthropicUsageObserver implements UsageObserver {
         output = value(usage, "output_tokens", output);
         creation = value(usage, "cache_creation_input_tokens", creation);
         read = value(usage, "cache_read_input_tokens", read);
+        component(usage, "input_tokens", "input");
+        component(usage, "output_tokens", "output");
+        component(usage, "cache_creation_input_tokens", "cache_write");
+        component(usage, "cache_read_input_tokens", "cache_read");
+        component(usage.path("cache_creation"), "ephemeral_5m_input_tokens", "cache_write_5m");
+        component(usage.path("cache_creation"), "ephemeral_1h_input_tokens", "cache_write_1h");
+        component(usage.path("server_tool_use"), "web_search_requests", "web_search");
+        component(usage.path("server_tool_use"), "web_fetch_requests", "web_fetch");
     }
-    public Usage snapshot() { return new Usage(input, output, creation, read, seen); }
+    private void component(JsonNode node, String field, String name) {
+        JsonNode quantity = node.path(field);
+        if (quantity.isIntegralNumber() && quantity.canConvertToLong() && quantity.asLong() >= 0)
+            components.merge(name, quantity.asLong(), Math::max);
+        else if (!quantity.isMissingNode() && !quantity.isNull()) malformed = true;
+    }
+    public Usage snapshot() { return new Usage(input, output, creation, read, seen, components,
+            complete() && components.containsKey("input") && components.containsKey("output")); }
     public boolean complete() { return seen && stopped && !malformed && !error; }
     public boolean error() { return error; }
 }

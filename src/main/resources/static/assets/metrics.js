@@ -2,7 +2,7 @@ let metricHours=24, metricPercentile='p95', metricReport=null, metricsVersion=0;
 const formatCount=value=>new Intl.NumberFormat().format(Number(value||0));
 
 function showPage() {
-  const allowed=['metrics','activity','members','approvals','connection'];
+  const allowed=['metrics','activity','members','approvals','connection','accounting','accounts'];
   const target=location.hash.slice(1).replace(/^view\//,'');
   const page=allowed.includes(target)?target:'metrics';
   document.querySelectorAll('[data-page]').forEach(section=>section.hidden=section.dataset.page!==page);
@@ -14,7 +14,7 @@ addEventListener('hashchange',()=>{showPage();window.scrollTo(0,0);});showPage()
 function populateTable(id,rows,columns) {
   const body=$(id);body.replaceChildren();
   if(!rows.length){const row=body.insertRow(),cell=row.insertCell();cell.colSpan=columns.length;cell.className='empty';cell.textContent='No requests in this window';return;}
-  for(const item of rows){const row=body.insertRow();for(const column of columns){const cell=row.insertCell();cell.textContent=column(item);}}
+  for(const item of rows){const row=body.insertRow();for(const [index,column] of columns.entries()){const cell=row.insertCell();if(index===0&&['topMembers','topModels'].includes(id)){const button=document.createElement('button');button.textContent=column(item);button.onclick=()=>openRequestScope(id==='topMembers'?{memberId:item.id}:{model:item.label},metricReport.from,metricReport.to);cell.append(button);}else cell.textContent=column(item);}}
 }
 function renderMetrics() {
   if(!metricReport)return;
@@ -54,7 +54,7 @@ function renderMetrics() {
 }
 async function refreshMetrics() {
   const version=++metricsVersion;
-  $('metricsData').setAttribute('aria-busy','true');$('metricsData').hidden=true;
+  $('metricsData').setAttribute('aria-busy','true');$('metricsData').hidden=!metricReport;
   $('metricsEmpty').hidden=true;
   $('metricsError').hidden=true;$('metricsUpdated').textContent='Loading metrics…';
   try{
@@ -62,7 +62,7 @@ async function refreshMetrics() {
     if(version!==metricsVersion)return;
     metricReport=report;renderMetrics();$('metricsData').hidden=false;
     $('metricsUpdated').textContent='Updated '+new Date(report.to).toLocaleTimeString()+' · '+report.stepSeconds/60+' min intervals';
-  }catch(error){if(version!==metricsVersion)return;metricReport=null;$('metricsError').textContent=error.message;$('metricsError').hidden=false;$('metricsUpdated').textContent='Could not load metrics';}
+  }catch(error){if(version!==metricsVersion)return;$('metricsError').textContent=error.message;$('metricsError').hidden=false;$('metricsUpdated').textContent=metricReport?'Refresh failed · previous data remains':'Could not load metrics';}
   finally{if(version===metricsVersion)$('metricsData').setAttribute('aria-busy','false');}
 }
 $('refreshMetrics').onclick=refreshMetrics;
@@ -78,5 +78,6 @@ for(const button of $('metricPercentiles').querySelectorAll('button'))button.onc
   renderMetrics();
 };
 // The existing admin session gate owns authentication and dispatches this only after an admin login.
-addEventListener('meter:admin-ready',refreshMetrics);
+addEventListener('meter:admin-ready',()=>{refreshMetrics();if(location.hash==='#view/accounting')refreshAccounting();});
+addEventListener('hashchange',()=>{if(location.hash==='#view/accounting'&&!$('content').hidden)refreshAccounting();});
 connectAdmin().then(()=>{if(!$('content').hidden)dispatchEvent(new Event('meter:admin-ready'));});

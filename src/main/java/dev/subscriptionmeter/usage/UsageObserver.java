@@ -6,4 +6,5 @@ public interface UsageObserver {
     Usage snapshot();
     boolean complete();
     boolean error();
+    default void finishJson() { }
 }

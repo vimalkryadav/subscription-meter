@@ -75,4 +75,16 @@ class AuditCaptureTest {
         assertThat(redact.text("api_key='hidden-value' "+secret+" Bearer opaque-secret"))
                 .doesNotContain("hidden-value",secret,"opaque-secret");
     }
+    @Test void rawOpenAiKeysInsidePromptTextAreRedactedWithoutCredentialFieldNames(){
+        String project="sk-proj-"+"aB12_xYz-".repeat(8),service="sk-svcacct-"+"Qw34_rTy-".repeat(8);
+        String prompt="Please inspect these values: "+project+" and "+service+". Keep this ordinary instruction.";
+        for(String input:List.of(prompt,"{\"messages\":[{\"role\":\"user\",\"content\":\""+prompt+"\"}]}",
+                "{\"messages\":[{\"content\":\""+prompt)){
+            assertThat(redact.payload(input)).contains("[REDACTED]","ordinary instruction").doesNotContain(project,service,"aB12_xYz","Qw34_rTy");
+        }
+        var store=mock(AuditStore.class);
+        new AuditCapture(store,redact,new SimpleMeterRegistry(),context(),"member","subscription",
+                ("{\"messages\":[{\"role\":\"user\",\"content\":\""+prompt+"\"}]}").getBytes(StandardCharsets.UTF_8),4096,100);
+        verify(store).begin(any(),eq("member"),eq("subscription"),anyString(),anyString(),argThat(body->body.contains("ordinary instruction")&&!body.contains(project)&&!body.contains(service)));
+    }
 }

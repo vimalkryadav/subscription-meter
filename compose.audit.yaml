@@ -1,0 +1,88 @@
+# Opt-in only. Apply migrations and pass the isolated replay/load gates before enabling transport.
+services:
+  audit-kafka:
+    image: apache/kafka:4.2.0
+    profiles: [audit]
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://audit-kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@audit-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_LOG_RETENTION_HOURS: -1
+      KAFKA_LOG_RETENTION_BYTES: -1
+      KAFKA_LOG_SEGMENT_BYTES: 67108864
+      KAFKA_MESSAGE_MAX_BYTES: 524288
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    volumes: [audit-kafka-data:/tmp/kraft-combined-logs]
+    healthcheck:
+      test: [CMD, /opt/kafka/bin/kafka-broker-api-versions.sh, --bootstrap-server, audit-kafka:9092]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+    mem_limit: 1536m
+    cpus: "1.0"
+    stop_grace_period: 30s
+  audit-topic-init:
+    image: apache/kafka:4.2.0
+    profiles: [audit]
+    entrypoint: [/opt/kafka/bin/kafka-topics.sh]
+    command: [--bootstrap-server, audit-kafka:9092, --create, --if-not-exists, --topic, "${METER_AUDIT_KAFKA_TOPIC:-control-usage.audit.v1}",
+              --partitions, "${METER_AUDIT_KAFKA_PARTITIONS:-1}", --replication-factor, "1", --config, min.insync.replicas=1,
+              --config, retention.ms=-1, --config, retention.bytes=-1,
+              --config, segment.bytes=67108864, --config, max.message.bytes=524288]
+    depends_on:
+      audit-kafka: {condition: service_healthy}
+    mem_limit: 256m
+  audit-group-init:
+    image: ${AUDIT_WORKER_IMAGE:-control-usage-unconfigured}
+    profiles: [audit-bootstrap]
+    entrypoint: [java, -Xmx128m, -Dloader.main=dev.subscriptionmeter.messaging.AuditWorkerMain,
+                 -cp, /app/app.jar, org.springframework.boot.loader.launch.PropertiesLauncher]
+    command: [--bootstrap-group]
+    environment:
+      METER_AUDIT_KAFKA_BOOTSTRAP_SERVERS: audit-kafka:9092
+      METER_AUDIT_KAFKA_TOPIC: ${METER_AUDIT_KAFKA_TOPIC:-control-usage.audit.v1}
+      METER_AUDIT_KAFKA_GROUP: ${METER_AUDIT_KAFKA_GROUP:-control-usage-audit-v1}
+    depends_on:
+      audit-topic-init: {condition: service_completed_successfully}
+    mem_limit: 192m
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  audit-worker:
+    image: ${AUDIT_WORKER_IMAGE:-control-usage-unconfigured}
+    profiles: [audit]
+    restart: on-failure:5
+    entrypoint: [java, -Xmx512m, -Dloader.main=dev.subscriptionmeter.messaging.AuditWorkerMain,
+                 -cp, /app/app.jar, org.springframework.boot.loader.launch.PropertiesLauncher]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://timescaledb:5432/meter
+      SPRING_DATASOURCE_USERNAME: meter
+      SPRING_DATASOURCE_PASSWORD: ${DATABASE_PASSWORD:?Run scripts/bootstrap.py first}
+      METER_AUDIT_KAFKA_BOOTSTRAP_SERVERS: audit-kafka:9092
+      METER_AUDIT_KAFKA_TOPIC: ${METER_AUDIT_KAFKA_TOPIC:-control-usage.audit.v1}
+      METER_AUDIT_KAFKA_GROUP: ${METER_AUDIT_KAFKA_GROUP:-control-usage-audit-v1}
+      METER_AUDIT_WORKER_BIND: 0.0.0.0
+      METER_AUDIT_WORKER_PORT: "9091"
+    depends_on:
+      timescaledb: {condition: service_healthy}
+      audit-topic-init: {condition: service_completed_successfully}
+    mem_limit: 768m
+    cpus: "0.5"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+volumes:
+  audit-kafka-data:

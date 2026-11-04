@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 directory = ROOT / "secrets"
 directory.mkdir(exist_ok=True)
 directory.chmod(0o700)
-for name in ("admin-token", "metrics-token", "upstream-token"):
+for name in ("admin-token", "metrics-token", "upstream-token", "deploy-token"):
     path = directory / name
     if not path.exists():
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

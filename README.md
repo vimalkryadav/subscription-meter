@@ -15,7 +15,11 @@ flowchart LR
     E --> G[Spring Boot gateway]
     G --> U[Upstream transport]
     U --> A[Configured upstream]
-    G --> D[(TimescaleDB request and event ledger)]
+    G --> L[Shared admission and request ledger]
+    L --> D[(PostgreSQL / TimescaleDB)]
+    G --> K[Optional Kafka acknowledged audit]
+    K --> W[Projection worker]
+    W --> D
     P[Prometheus] --> G
     B[Member portal / login] --> T
     M[Admin account / session] --> T
@@ -24,31 +28,34 @@ flowchart LR
 TimescaleDB stores request summaries, full details, ordered streaming events, and
 access records in four time-partitioned hypertables. Member records remain a
 relational table in the same database. Prometheus holds operational metrics, not
-the accounting source of truth. Cassandra, Kafka, and Redis are not required for
-this single-instance experiment.
+the accounting source of truth. Kafka is an opt-in audit transport with an independent projection worker. Redis
+and Cassandra are not needed for this 20-member deployment. Blue and green
+application instances share PostgreSQL admission counters, sessions and leases.
 
 The implementation follows SOLID through narrow ports and adapters:
 
 | Responsibility | Port / service | Adapter |
 |---|---|---|
 | Member keys and revocation | MemberService, MemberRepository | JdbcMemberRepository |
-| Admission control | RequestLimiter | InMemoryRequestLimiter |
+| Admission control | RequestLimiter | PostgresRequestLimiter (in-memory fixture only) |
 | Credential provisioning | UpstreamCredentialProvider | FileCredentialProvider |
 | HTTP forwarding | UpstreamTransport | JdkUpstreamTransport |
-| Streaming usage | UsageObserver | AnthropicUsageObserver |
-| Request lifecycle | RequestLedger | JdbcRequestLedger |
+| Streaming usage | UsageObserver | AnthropicUsageObserver, OpenAIUsageObserver |
+| Request lifecycle | RequestLedger | JdbcRequestLedger, KafkaRequestLedger |
 | Reporting queries | AnalyticsReader | JdbcAnalyticsReader |
 | Request orchestration | GatewayService | Uses the ports above |
 | HTTP presentation | GatewayController, AdminController | Servlet response sink |
-| Detailed capture | AuditCaptureFactory, AuditStore | JdbcAuditStore |
+| Detailed capture | AuditCaptureFactory, AuditStore | JdbcAuditStore, KafkaAuditStore |
 | Stored-copy redaction | CredentialRedactor | Recursive JSON and text filtering |
-| Time partitioning and retention | TimescaleSetup | TimescaleDB policies |
+| Time partitioning and retention | Serialized migration job | TimescaleDB policies |
 
-Controllers do not issue database queries or manage upstream credentials.
+Gateway orchestration depends on narrow interfaces; provider credentials remain server-side.
 Request bodies and stream bytes are forwarded without rewriting the protocol.
 Usage parsing observes a copy of each chunk. Output-token deltas are cumulative;
-the observer does not sum them. Full request and response content is captured in
-redacted copies; forwarding is unchanged.
+the observer does not sum them. Accepted request content and bounded response content are captured in redacted
+copies. Kafka mode acknowledges each completed response frame before releasing
+its original bytes; audit failure or capture-limit exhaustion terminates that
+stream. JDBC compatibility mode retains its earlier best-effort response capture.
 
 ## Build and test
 
@@ -57,7 +64,9 @@ Requires JDK 26 and Maven 3.6.3+:
 ```sh
 mvn package
 python3 scripts/bootstrap.py
-docker compose up -d --build
+docker compose up -d timescaledb
+python3 scripts/migrate.py --apply --timescale
+docker compose up -d --build app
 ```
 
 Provision `secrets/upstream-token` before sending model requests. There is no mock
@@ -93,8 +102,13 @@ Manage the deployment on the workspace:
 cd /home/coder/subscription-meter
 sudo docker compose ps
 sudo docker compose logs --tail=100 app
-sudo docker compose up -d --build
+python3 scripts/blue_green.py --help
 ```
+
+Use the [blue/green deployment procedure](deploy/BLUE_GREEN.md) for upgrades.
+The one-time migration from the legacy single app requires an explicitly
+authorized admission pause; subsequent releases drain existing streams. Do not
+recreate the shared edge, tunnel or database as part of an application release.
 
 Docker restart policies restart processes while the workspace is running; they
 do not override Coder template shutdown or inactivity policies. No user autostop
@@ -124,8 +138,8 @@ with hashed server-side storage, a 12-hour absolute lifetime, and a one-hour idl
 limit. Up to five sessions are retained per account. Session IDs rotate on login;
 logout invalidates them. CSRF tokens protect authenticated mutations, while a
 required custom header protects signup/login from form-based cross-origin posts.
-CORS is not enabled. Password hashing concurrency and login attempts are bounded
-per instance. Public portal request bodies are capped at 16 KiB by Caddy.
+CORS is not enabled. Password hashing concurrency is bounded per instance; login throttles are shared
+in PostgreSQL across application instances. Public portal request bodies are capped at 16 KiB by Caddy.
 
 The portal never accepts a client-supplied account ID for access or usage queries.
 Only accounts with the `admin` role can access admin endpoints. Ordinary member
@@ -271,32 +285,42 @@ controlled by you. `deploy/cloudflared.example.yml` routes that named tunnel to
 the same restricted public proxy. No domain purchase or named tunnel has been
 created by this project.
 
-## Accounting limits
+## Usage, value and subscription accounting
 
-- Requests are written as `pending` before the upstream call and finalized once.
-  On restart, leftover pending requests become `interrupted`.
-- `complete`, `partial`, `disconnected`, `stream_error`, and `upstream_error`
-  remain separate in reports. Missing usage is not proof of zero consumption.
-- Abrupt process loss can lose the final usage for a pending request. A failed
-  final database write leaves the row pending and increments
-  `meter_persistence_failures_total`; alert and reconcile these rows.
-- Full prompts, response content, tools, and upstream error bodies are stored as
-  redacted audit records. They are not sent to ordinary console logs. Authentication
-  headers are excluded. Redaction is best effort, not a guarantee that arbitrary
-  sensitive content has been removed.
-- Observed tokens are neither an exact percentage of a subscription allowance
-  nor a bill. No price conversions are made.
-- Client retries are separate upstream attempts and are counted separately.
-  The gateway does not add an application-level retry policy.
-- One application instance only: rate/concurrency limits are in memory and
-  reset after restart. Multiple replicas require a shared limiter and a revised
-  startup recovery policy. Limits do not impose token budgets on active streams.
-- A request has a bounded upstream header wait and a bounded body lifetime,
-  each controlled by `UPSTREAM_TIMEOUT_SECONDS` (default 300 seconds).
-- Timescale retention defaults to 30 days for details/events/access and 90 days
-  for request summaries. Policies drop whole daily chunks, so expiry is approximate.
-  No recurring database backup schedule is installed. The migration creates a
-  private logical backup and retains the old volume. Prometheus retains 15 days / 2 GB.
+The admin dashboard separates three different measurements:
+
+- **Observed provider quota:** timestamped account-level five-hour/seven-day
+  percentages and resets from allowlisted upstream headers or the optional local
+  Claude status-line adapter. Missing and stale observations are explicit. Calls
+  outside this gateway can consume the same allowance; per-member quota
+  percentages cannot be inferred exactly from token counts.
+- **Estimated API-equivalent value:** versioned model/component rates applied to
+  reported input, output and cache counters. This is a comparison value, not a
+  subscription invoice. Missing counters, unknown models and unavailable historic
+  rate cards remain partial or unpriced. No missing usage is treated as zero.
+- **Subscription expense allocation:** an administrator enters an actual invoice,
+  currency, period, attributable gateway fraction and allocation basis. The
+  allocation reconciles to the entered amount and exposes unallocated expense.
+  It does not claim to reproduce the provider's subscription metering.
+
+Work categories are inferred locally from bounded retained user instructions,
+with rule evidence and confidence labels. Administrators can correct them; the
+manual category survives later usage/capture updates. These categories describe
+request content, not employee productivity or work performed outside the gateway.
+
+Request admission is durable before upstream dispatch. PostgreSQL leases and
+shared limits coordinate both application colors; recovery is fenced to a dead
+instance. Active, complete, partial, disconnected and upstream-error requests
+remain distinguishable. Unknown final usage after process loss remains unknown.
+Client retries are separate attempts; the gateway never retries generation.
+Limits do not impose token budgets on an already active stream.
+
+Timescale policies retain details/events/access for 30 days and metadata for
+90 days by default, dropping whole daily chunks. Prometheus retains 15 days /
+2 GB. Kafka durability, projection lag, retention and failure behavior are
+described in [the audit pipeline guide](docs/audit-pipeline.md). This is one
+workspace with local volumes; blue/green does not provide host/database/tunnel
+high availability. No recurring database backup schedule has been installed.
 
 ## Useful operational metrics
 
@@ -315,8 +339,12 @@ Activity-window dropdowns use app-styled menus with arrow-key, Home/End, Escape,
 type-ahead, and Tab support. Chart values are also available as expandable tables. Activity, member keys,
 access requests, and connection settings have separate navigation entries.
 
-The Activity view provides paginated requests, a member filter, per-request detail,
-ordered event expansion, access records, and JSON export. Admin authentication
+The request explorer provides cursor pagination, shareable filter state, member,
+model, status, duration, provider, account, key-prefix and category filters,
+per-request detail, ordered event expansion, capture completeness and streamed
+JSON export. Administration includes account search, session revocation,
+conflict-checked RPM/concurrency edits and an audit trail. Role editing is not
+exposed; the sole-administrator policy is preserved. Admin authentication
 protects every inspection endpoint, including access through the public
 Cloudflare URL. Model traffic uses the separate `/gateway` path.
 
@@ -350,7 +378,7 @@ provider-internal processing, or local tool activity never included in requests.
 Old metadata-only rows are explicitly marked in the UI. Every client retry is a
 separate request; correlation depends on IDs/metadata actually sent by the client.
 
-Capture limits (forwarding continues when an audit limit is reached):
+Capture limits (Kafka mode stops forwarding at a limit; JDBC mode marks truncation):
 
 | Setting | Default |
 |---|---:|
@@ -358,19 +386,26 @@ Capture limits (forwarding continues when an audit limit is reached):
 | `AUDIT_MAX_RESPONSE_BYTES` | 8 MiB per request |
 | `AUDIT_MAX_EVENTS` | 10,000 per request |
 | Maximum individual SSE frame retained | 512 KiB |
-| `AUDIT_RETENTION_DAYS` | 30 |
-| `AUDIT_METADATA_RETENTION_DAYS` | 90 |
+| Detail/event/access retention policy | 30 days |
+| Request metadata retention policy | 90 days |
 
-Limits produce an explicit `truncated` capture state and metric. Full request
-records are written before forwarding; if that write fails, upstream dispatch
-fails closed. Events are written synchronously as they complete. Later audit
-write failures increment `meter_audit_failures_total` without replacing the client
-response; detail capture is marked `capture_error` when the final write succeeds.
-A process crash can lose the current partial event and final timing; startup marks
-unfinished records `interrupted`. The extra writes add latency, so reassess write
-batching if traffic substantially exceeds this 20-member experiment.
+Retention policy changes require a new migration; serving-instance environment
+variables do not change existing database policies.
+
+Limits produce an explicit incomplete/truncated capture state and metric. Request
+capture must succeed before upstream dispatch. In Kafka mode, acknowledged audit
+events precede released response bytes and database projection is asynchronous;
+Kafka failure prevents additional unaudited output. In JDBC compatibility mode,
+response audit failures are best effort and can leave incomplete capture. See
+[the pipeline guide](docs/audit-pipeline.md) for bounds and recovery procedures.
 
 Admin APIs:
+
+- `GET /admin/request-search` provides bounded cursor pagination and filters.
+- `GET /admin/request-search/{id}` and `/admin/requests/{id}/export` inspect/export capture.
+- `GET /admin/accounting` reports value, category, quota and usage coverage.
+- `/admin/accounts`, `/admin/accounts/{id}/sessions`, `/admin/members/{id}/limits`
+  and `/admin/action-log` provide administrator operations.
 
 - `GET /admin/metrics?hours=6&mode=all` returns operational summaries, traffic buckets,
   request-duration and first-response-byte percentiles, top members/models, and error counts.
@@ -388,21 +423,20 @@ Admin APIs:
 
 ### Upgrade an existing deployment
 
-Build and copy the new application and Compose configuration first. Then run on
-the workspace, with Docker access:
+Follow [BLUE_GREEN.md](deploy/BLUE_GREEN.md). Schema changes use ordered,
+checksummed migrations under a PostgreSQL advisory lock; serving instances do
+not create tables or globally rewrite pending rows at startup. Keep the old
+image and compatible schema for rollback. The historical PostgreSQL-to-Timescale
+script is not the application-release procedure.
 
-```sh
-sudo bash scripts/migrate_timescale.sh
-```
+### Optional Codex protocol adapter
 
-The migration starts an empty TimescaleDB volume, stops the app, dumps the existing
-PostgreSQL database to `backups/`, restores it, checks historical request counts,
-and starts the new app. It refuses an already populated target. App startup
-converts the audit tables to hypertables and installs retention policies. Check
-readiness and run both acceptance scripts before stopping the old `postgres`
-service. The old volume and dump are retained; there is no automatic deletion.
-If migration fails, investigate before restarting; the backup and old database
-remain available. Do not rerun against a partially restored target blindly.
+OpenAI Responses routing exists behind `meter.openai.enabled=false` (the default).
+It requires explicit `siwc-plan` authentication and a dedicated server credential
+file. It does not reuse the Mac's Codex login, silently fall back to an API key,
+or retry generation. Hosted SIWC eligibility, credential provisioning and a real
+end-to-end Codex test remain outstanding. Anthropic traffic remains independent.
+See [the Codex adapter guide](docs/codex-plan-adapter.md) before enabling this adapter.
 
 ## References
 

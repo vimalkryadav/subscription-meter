@@ -2,6 +2,7 @@ package dev.subscriptionmeter.audit;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
@@ -19,6 +20,8 @@ public final class AuditCapture {
     private int sequence, storedEvents, previousByte, capturedBytes;
     private boolean streaming, truncated, failed, discardFrame;
     private String responseHeaders = "{}", errorType = "", errorMessage = "";
+    private boolean forwardingCompleted;
+    @FunctionalInterface public interface Forwarder { void write(byte[] bytes,int length) throws IOException; }
 
     public AuditCapture(AuditStore store, CredentialRedactor redact, MeterRegistry metrics, AuditContext context,
                         String memberId, String mode, byte[] body, int maxBytes, int maxEvents) {
@@ -31,6 +34,63 @@ public final class AuditCapture {
     private long elapsed() { return (System.nanoTime() - start) / 1_000_000; }
     public void headers(Map<String,List<String>> headers, boolean streaming) {
         this.streaming=streaming; this.responseHeaders=redact.headers(headers); headersMs=elapsed();
+        store.headers(context.id(),responseHeaders,headersMs,streaming);
+    }
+    /** Kafka mode holds only bounded frames and releases a batch after every acknowledgement. */
+    public void forward(byte[] bytes,int length,Forwarder sink)throws IOException {
+        if(!store.requiresAcknowledgedForwarding()){bytes(bytes,length);sink.write(bytes,length);return;}
+        if(length<0 || length>bytes.length || length>65536)throw new AuditUnavailableException("Forward chunk exceeds bound");
+        if(firstByteMs<0)firstByteMs=elapsed();
+        responseBytes+=length;
+        if((long)capturedBytes+length>maxBytes){truncated=true;throw new AuditUnavailableException("Complete capture response limit reached");}
+        capturedBytes+=length;
+        if(!streaming){response.write(bytes,0,length);return;}
+        var batch=new ArrayList<AuditEvent>();
+        var raw=new ByteArrayOutputStream();
+        for(int i=0;i<length;i++){
+            byte b=bytes[i];frame.write(b);
+            if(frame.size()>524288){truncated=true;throw new AuditUnavailableException("Complete capture SSE frame limit reached");}
+            if(b!='\r'){
+                if(b=='\n' && previousByte=='\n'){
+                    if(storedEvents+batch.size()>=maxEvents){truncated=true;throw new AuditUnavailableException("Complete capture event limit reached");}
+                    batch.add(strictEvent(frame.toString(StandardCharsets.UTF_8),++sequence));
+                    raw.writeBytes(frame.toByteArray());frame.reset();
+                    if(batch.size()==64){release(batch,raw,sink);}
+                }
+                previousByte=b;
+            }
+        }
+        release(batch,raw,sink);
+    }
+    private AuditEvent strictEvent(String text,int seq){
+        String type="message";StringBuilder data=new StringBuilder();
+        for(String line:text.split("\\r?\\n")){
+            if(line.startsWith("event:"))type=line.substring(6).strip();
+            if(line.startsWith("data:")){if(!data.isEmpty())data.append('\n');data.append(line.substring(5).stripLeading());}
+        }
+        if(data.isEmpty()){type="comment";data.append(text);}
+        String safeType=redact.text(type);
+        return new AuditEvent(context.id(),context.startedAt(),seq,elapsed(),safeType.substring(0,Math.min(100,safeType.length())),redact.payload(data.toString()),false);
+    }
+    private void release(List<AuditEvent> batch,ByteArrayOutputStream raw,Forwarder sink)throws IOException{
+        if(batch.isEmpty())return;
+        try{store.eventsBatch(List.copyOf(batch));}
+        catch(RuntimeException e){captureFailed();throw new AuditUnavailableException("Response audit acknowledgement failed",e);}
+        storedEvents+=batch.size();
+        byte[] ready=raw.toByteArray();sink.write(ready,ready.length);
+        batch.clear();raw.reset();
+    }
+    public void completeForwarding(Forwarder sink)throws IOException{
+        if(!store.requiresAcknowledgedForwarding() || forwardingCompleted)return;
+        forwardingCompleted=true;
+        if(streaming){
+            if(frame.size()>0){truncated=true;throw new AuditUnavailableException("Upstream ended with incomplete SSE frame");}
+        }else{
+            byte[] body=response.toByteArray();
+            try{store.event(context.id(),context.startedAt(),++sequence,elapsed(),"response_body",redact.payload(new String(body,StandardCharsets.UTF_8)),false);storedEvents++;}
+            catch(RuntimeException e){captureFailed();throw new AuditUnavailableException("Response audit acknowledgement failed",e);}
+            sink.write(body,body.length);
+        }
     }
     public void bytes(byte[] bytes, int length) {
         if (firstByteMs < 0) firstByteMs=elapsed();
@@ -82,7 +142,7 @@ public final class AuditCapture {
         errorType=error.getClass().getSimpleName(); errorMessage=redact.text(error.getMessage());
     }
     public void finish(String state) {
-        try { finishInternal(state); } catch (RuntimeException e) { captureFailed(); }
+        try { finishInternal(state); } catch (RuntimeException e) { captureFailed(); if(store.requiresAcknowledgedForwarding())throw e; }
     }
     private void finishInternal(String state) {
         if (streaming && frame.size()>0 && !discardFrame) persistFrame(true);
@@ -98,7 +158,7 @@ public final class AuditCapture {
         fields.put("truncated",truncated); fields.put("upstream_headers_ms",headersMs<0?null:headersMs);
         fields.put("first_byte_ms",firstByteMs<0?null:firstByteMs);
         fields.put("error_type",errorType); fields.put("error_message",errorMessage);
-        try { store.finish(context.id(),fields); } catch (RuntimeException e) { captureFailed(); }
+        try { store.finish(context.id(),fields); } catch (RuntimeException e) { captureFailed(); if(store.requiresAcknowledgedForwarding())throw e; }
         if (truncated) metrics.counter("meter.audit.truncated").increment();
     }
 }
