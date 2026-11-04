@@ -1,6 +1,6 @@
 # Scoped automatic deployment through Coder
 
-Successful pushes to `main` run the release checks, publish the image, and pass the exact commit and GHCR digest to the fixed receiver in `bugpolice-control`. Manual workflow dispatch deploys only with `deploy=true`. The production environment accepts only the `main` branch. Workflow concurrency serializes releases; the receiver also holds a host lock, verifies main ancestry and requires the completed bootstrap marker. Images are public, so the host needs no registry credential.
+Successful pushes to `main` run the release checks, publish the image, and pass the exact commit and GHCR digest to the fixed receiver in `bugpolice-control`. Manual workflow dispatch deploys only with `deploy=true`. The production environment accepts only the `main` branch. GitHub concurrency does not guarantee FIFO ordering. Under the host deployment lock, normal releases skip the already-active commit and older ancestors without runtime changes, allow only descendants of the active commit, and reject divergent or unverifiable history. Explicit `--rollback` retains its existing previous-release path. Workflow concurrency serializes releases; the receiver also holds a host lock, verifies main ancestry and requires the completed bootstrap marker. Images are public, so the host needs no registry credential.
 
 The production environment secret `CODER_SESSION_TOKEN` is an expiring Coder automation token with exactly:
 
