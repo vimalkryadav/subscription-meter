@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Heading, Notice, Panel, useResource } from './ui';
+import StreamProbe from './StreamProbe';
 import './operations.css';
 interface Check { id: string; label: string; state: 'ok' | 'failed' | 'unknown'; value: number | null; unit: string; consecutiveFailures: number; alerting: boolean }
 interface Report { generatedAt: string | null; status: string; stale: boolean; checks: Check[] }
@@ -22,6 +23,7 @@ export default function Operations() {
   const stale = !!data && (data.stale || !data.generatedAt || Date.now() - Date.parse(data.generatedAt) > 180_000);
   return <><Heading title="Operations" subtitle="Local service health, audit processing, and recovery readiness."><button disabled={resource.loading} onClick={resource.refresh}>Refresh health</button></Heading>
     <Notice error>{resource.error}</Notice>
+    <StreamProbe />
     {resource.loading && !data && <p role="status">Loading operational health…</p>}
     {data && <>
       <Notice error={stale || data.status !== 'ok'}>{stale ? 'Monitoring report is missing or stale. Current health is unknown.' : data.status === 'ok' ? 'All monitored checks are healthy.' : data.status === 'alert' ? 'A sustained operational issue needs attention.' : 'One or more checks need attention; sustained checks will raise an alert.'}</Notice>

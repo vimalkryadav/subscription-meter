@@ -9,6 +9,13 @@ journal. No email, Slack, or other external notification destination is configur
 This monitor runs on the same workspace: a total workspace outage requires an
 external observer to detect it.
 
+## Browser streaming test
+
+Use **Test browser streaming** to check event delivery through your current public
+URL without making a model request. This complements local health checks and
+reports incremental, batched or buffered delivery. See [streaming diagnostics](streaming-diagnostics.md)
+for the measured protocol comparison and its limits.
+
 ## Backups
 
 `control-usage-backup.timer` runs daily at 01:15 UTC, with up to five minutes of
