@@ -13,6 +13,8 @@ export default function RequestExplorer() {
   const [cursors, setCursors] = useState(['']);
   const [detail, setDetail] = useState(() => new URLSearchParams(location.search).get('rq_detail') || '');
   const [validation, setValidation] = useState('');
+  const [advanced, setAdvanced] = useState(false);
+  const advancedCount = Object.entries(draft).filter(([key, value]) => !['days', 'requestId', 'state'].includes(key) && value.trim()).length;
   useEffect(() => {
     const restore = () => {
       const filters = readFilters(location.search); setDraft(filters); setApplied(filters);
@@ -45,19 +47,25 @@ export default function RequestExplorer() {
   ];
   return <>
     <Heading title="Request explorer" subtitle="Inspect captured requests, responses, and ordered streaming events."><button onClick={refresh} disabled={result.loading}>Refresh activity</button></Heading>
-    <Panel title="Search recorded requests"><p className="cu-muted">Metadata filters are saved in this URL. Captured content stays out of it. Captures may arrive after request completion.</p>
-      <form onSubmit={submit}><div className="cu-filter-grid">
-        <Select label={draft.from || draft.to ? 'Preset (custom dates below)' : 'Activity window'} value={draft.days} onChange={value => setDraft(current => presetWindow(current, value))} items={[{ value: '1', label: 'Last 24 hours' }, { value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }]} />
-        <Select label="Provider" value={draft.provider} onChange={value => field('provider', value)} items={providers} />
-        <Select label="Work category" value={draft.category} onChange={value => field('category', value)} items={[{ value: '', label: 'All categories' }, ...options(categories)]} />
-        {inputFields.map(item => <label key={item.key}>{item.label}<input value={draft[item.key]} onChange={event => field(item.key, event.target.value)} type={item.type || 'text'} min={item.min} max={item.max} maxLength={item.length} /></label>)}
-        {(['from', 'to'] as const).map(key => <label key={key}>{key === 'from' ? 'From' : 'Until'} (your timezone)<input type="datetime-local" step="0.001" value={localDateInput(draft[key])} onChange={event => field(key, event.target.value ? new Date(event.target.value).toISOString() : '')} /></label>)}
-        <Select label="Request outcome" value={draft.state} onChange={value => field('state', value)} items={[{ value: '', label: 'All outcomes' }, ...options(['complete', 'pending', 'partial', 'disconnected', 'stream_error', 'upstream_error', 'gateway_error', 'interrupted'])]} />
-        <Select label="Capture" value={draft.captureState} onChange={value => field('captureState', value)} items={[{ value: '', label: 'All captures' }, ...options(Object.keys(captureMessages))]} />
-        <Select label="Usage reporting" value={draft.usageSeen} onChange={value => field('usageSeen', value)} items={[{ value: '', label: 'Any coverage' }, { value: 'true', label: 'Usage reported' }, { value: 'false', label: 'Usage missing' }]} />
-      </div><div className="cu-bar"><button className="cu-primary" type="submit">Search requests</button><button type="button" onClick={() => persistFilters(emptyFilters())}>Clear filters</button></div></form>
+    <Panel title="Recorded requests">
+      <form onSubmit={submit}>
+        <div className="cu-filter-grid cu-primary-filters">
+          <label>Request ID<input value={draft.requestId} onChange={event => field('requestId', event.target.value)} maxLength={36} placeholder="Find an exact request ID…" /></label>
+          <Select label={draft.from || draft.to ? 'Window · custom dates' : 'Activity window'} value={draft.days} onChange={value => setDraft(current => presetWindow(current, value))} items={[{ value: '1', label: 'Last 24 hours' }, { value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }]} />
+          <Select label="Request outcome" value={draft.state} onChange={value => field('state', value)} items={[{ value: '', label: 'All outcomes' }, ...options(['complete', 'pending', 'partial', 'disconnected', 'stream_error', 'upstream_error', 'gateway_error', 'interrupted'])]} />
+        </div>
+        <div className="cu-bar cu-search-actions"><div><button className="cu-primary" type="submit">Search requests</button><button type="button" onClick={() => persistFilters(emptyFilters())}>Clear</button></div><button type="button" aria-expanded={advanced} aria-controls="advanced-request-filters" onClick={() => setAdvanced(value => !value)}>Advanced filters{advancedCount ? ` (${advancedCount})` : ''} <span aria-hidden="true">{advanced ? '−' : '+'}</span></button></div>
+        {advanced && <div id="advanced-request-filters" className="cu-advanced-filters"><div className="cu-filter-grid">
+          <Select label="Provider" value={draft.provider} onChange={value => field('provider', value)} items={providers} />
+          <Select label="Work category" value={draft.category} onChange={value => field('category', value)} items={[{ value: '', label: 'All categories' }, ...options(categories)]} />
+          {inputFields.filter(item => item.key !== 'requestId').map(item => <label key={item.key}>{item.label}<input value={draft[item.key]} onChange={event => field(item.key, event.target.value)} type={item.type || 'text'} min={item.min} max={item.max} maxLength={item.length} /></label>)}
+          {(['from', 'to'] as const).map(key => <label key={key}>{key === 'from' ? 'From' : 'Until'} (your timezone)<input type="datetime-local" step="0.001" value={localDateInput(draft[key])} onChange={event => field(key, event.target.value ? new Date(event.target.value).toISOString() : '')} /></label>)}
+          <Select label="Capture" value={draft.captureState} onChange={value => field('captureState', value)} items={[{ value: '', label: 'All captures' }, ...options(Object.keys(captureMessages))]} />
+          <Select label="Usage reporting" value={draft.usageSeen} onChange={value => field('usageSeen', value)} items={[{ value: '', label: 'Any coverage' }, { value: 'true', label: 'Usage reported' }, { value: 'false', label: 'Usage missing' }]} />
+        </div></div>}
+      </form>
       <Notice error>{validation || result.error}</Notice>
-      <p className="cu-muted" aria-live="polite">{result.loading ? 'Refreshing requests…' : result.data ? 'Updated ' + date(result.data.generatedAt) : 'No loaded results'} · {date(window.from)} – {date(window.to)}</p>
+      <p className="cu-result-summary" aria-live="polite"><strong>{result.loading ? 'Loading requests…' : result.data ? `${result.data.items.length} requests on this page` : 'No loaded results'}</strong><span>{date(window.from)} – {date(window.to)}</span></p>
       <div aria-busy={result.loading}><Table headings={['Started / member', 'Model', 'Status', 'Duration', 'Capture', '']} empty={!result.loading && !result.data?.items.length}>{result.data?.items.map(row => <tr key={text(row.id)}><td>{date(row.started_at)}<br />{text(row.name)}</td><td>{text(row.model)}</td><td>{text(row.status_code)} · {text(row.state)}</td><td>{duration(row.duration_ms)}</td><td><span className="cu-badge">{text(row.capture_status)}</span></td><td><button onClick={() => inspect(text(row.id))} aria-label={'Inspect request ' + text(row.id)}>Inspect</button></td></tr>)}</Table></div>
       <div className="cu-bar"><button disabled={result.loading || cursors.length === 1} onClick={() => setCursors(current => current.slice(0, -1))}>Previous</button><button disabled={result.loading || !result.data?.nextCursor} onClick={() => { if (result.data?.nextCursor) setCursors(current => [...current, result.data!.nextCursor!]); }}>Next</button><span>Page {cursors.length} · {result.data?.items.length || 0} requests</span></div>
     </Panel>
