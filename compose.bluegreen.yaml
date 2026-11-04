@@ -1,5 +1,8 @@
 # Overlay only after the explicit compatibility/bootstrap checklist has passed.
 services:
+  prometheus:
+    volumes:
+      - ./deploy/prometheus.bluegreen.yml:/etc/prometheus/prometheus.yml:ro
   app-blue:
     extends:
       file: compose.yaml
