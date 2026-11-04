@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       deploy:
-        description: 'Deploy after the compatibility/bootstrap checklist is verified'
+        description: 'Deploy this main release after successful verification'
         type: boolean
         default: false
 permissions:
@@ -29,12 +29,16 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: maven
-      - run: mvn --batch-mode --no-transfer-progress verify
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: mvn --batch-mode --no-transfer-progress verify
       - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - run: node --test src/test/js/*.test.cjs
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - run: go test -race deploy/coder-cd/main.go deploy/coder-cd/main_test.go
       - run: bash -n scripts/receive_release.sh
       - name: Start isolated audit dependencies
         run: docker compose -p control-usage-test -f compose.audit-test.yaml up -d --wait --wait-timeout 120
@@ -68,20 +72,31 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: echo "image=ghcr.io/vimalkryadav/control-usage@$DIGEST" >> "$GITHUB_OUTPUT"
   deploy:
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy)
     needs: build
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 20
     steps:
-      - uses: coder/setup-action@v1
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          access_url: https://coder.scaler.com
-          coder_session_token: ${{ secrets.CODER_SESSION_TOKEN }}
+          go-version: '1.26.x'
+          cache: false
+      - name: Download the deployment-matched Coder CLI
+        run: |
+          curl --fail --silent --show-error --location --retry 3 --max-time 120 https://coder.scaler.com/bin/coder-linux-amd64 -o "$RUNNER_TEMP/coder"
+          chmod 700 "$RUNNER_TEMP/coder"
+          "$RUNNER_TEMP/coder" version | grep -F 'Coder v2.38.4+d16b1ca'
       - name: Deploy immutable release to the dedicated checkout
         env:
           RELEASE_IMAGE: ${{ needs.build.outputs.image }}
           RELEASE_SHA: ${{ github.sha }}
+          AUTOMATION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}
         run: |
-          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$RELEASE_IMAGE" =~ ^ghcr.io/vimalkryadav/control-usage@sha256:[0-9a-f]{64}$ ]]
-          coder ssh --disable-autostart --wait=no bugpolice-control -- /home/coder/control-usage-deploy/scripts/receive_release.sh "$RELEASE_SHA" "$RELEASE_IMAGE"
+          umask 077
+          token_file=$(mktemp "$RUNNER_TEMP/control-usage-token.XXXXXX")
+          trap 'rm -f "$token_file"' EXIT
+          printf '%s' "$AUTOMATION_TOKEN" > "$token_file"
+          unset AUTOMATION_TOKEN
+          go run deploy/coder-cd/main.go --coder "$RUNNER_TEMP/coder" --token-file "$token_file" --sha "$RELEASE_SHA" --image "$RELEASE_IMAGE"

@@ -229,6 +229,36 @@ def verify_shared_audit(manifest,env):
             if contract!="1":raise RuntimeError("Worker does not declare supported audit contract1")
 
 
+def release_order(active_sha, requested_sha):
+    """Resolve commit ancestry from local Git objects; uncertainty never permits a release."""
+    for sha in (active_sha, requested_sha):
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise ValueError("Full active and requested Git SHAs required")
+        try:
+            run(["git", "cat-file", "-e", sha + "^{commit}"], capture_output=True, timeout=15)
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise RuntimeError("Cannot verify release Git objects; deployment refused") from exc
+    if active_sha == requested_sha:
+        return "same"
+
+    def ancestor(first, second):
+        try:
+            run(["git", "merge-base", "--is-ancestor", first, second], capture_output=True, timeout=15)
+            return True
+        except subprocess.CalledProcessError as exc:
+            if exc.returncode == 1:
+                return False
+            raise RuntimeError("Cannot determine release ancestry; deployment refused") from exc
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise RuntimeError("Cannot determine release ancestry; deployment refused") from exc
+
+    if ancestor(requested_sha, active_sha):
+        return "stale"
+    if ancestor(active_sha, requested_sha):
+        return "forward"
+    raise RuntimeError("Requested release diverges from active release; use reviewed explicit rollback or recovery")
+
+
 def deploy(args):
     STATE.mkdir(exist_ok=True)
     with (STATE / "deploy.lock").open("w") as lock:
@@ -240,9 +270,7 @@ def deploy(args):
         manifest = json.loads(path.read_text())
         if manifest.get("phase") != "stable":
             raise RuntimeError("Previous deployment unfinished; inspect manifest and edge before recovery")
-        preflight_resources()
         old = manifest["active"]
-        verify_edge(manifest["slots"][old]["sha"])
         new = "green" if old == "blue" else "blue"
         if args.rollback:
             previous = manifest.get("previous")
@@ -254,7 +282,13 @@ def deploy(args):
                 raise ValueError("An immutable control-usage GHCR digest or full local image ID is required")
             if not re.fullmatch(r"[0-9a-f]{40}", args.sha or ""):
                 raise ValueError("Full Git SHA required")
+            order = release_order(manifest["slots"][old]["sha"], args.sha)
+            if order in ("same", "stale"):
+                print("Release skipped: " + ("already active" if order == "same" else "older than active release") + ". No runtime changes made.")
+                return
             release = {"image": args.image, "sha": args.sha}
+        preflight_resources()
+        verify_edge(manifest["slots"][old]["sha"])
         manifest["slots"][new] = release
         env = release_env(manifest)
         verify_shared_audit(manifest,env)

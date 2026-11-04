@@ -2,6 +2,7 @@
 """Opt-in packaged application smoke, using only compose.audit-test dependencies."""
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -54,6 +55,13 @@ def main():
                     except (OSError,ValueError):pass
                     time.sleep(.5)
                 else:raise RuntimeError('Packaged application never became ready')
+                code,html=request('/')
+                assert code==200 and b'id="root"' in html
+                assets=re.findall(rb'(?:src|href)="(/assets/react/[^"]+)"',html)
+                assert len(assets)>=2,'React script and CSS must be packaged'
+                for asset in assets:
+                    assert request(asset.decode())[0]==200,asset.decode()
+                assert request('/manage.html')[0]==404
                 assert request('/actuator/health')[0]==200
                 assert request('/internal/deployment')[0]==404
                 assert request('/admin/request-search')[0]==401

@@ -20,6 +20,46 @@ def load(name):
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_release_order_uses_actual_git_graph_and_fails_closed(self):
+        deploy = load("blue_green")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def git(*args):
+                return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q")
+            git("config", "user.name", "Deployment test")
+            git("config", "user.email", "test@example.invalid")
+            def commit(message):
+                git("commit", "--allow-empty", "-qm", message)
+                return git("rev-parse", "HEAD")
+            first = commit("first")
+            second = commit("second")
+            third = commit("third")
+            git("checkout", "--detach", first)
+            divergent = commit("divergent")
+            with patch.object(deploy, "ROOT", root):
+                self.assertEqual(deploy.release_order(second, second), "same")
+                self.assertEqual(deploy.release_order(third, first), "stale")
+                self.assertEqual(deploy.release_order(first, third), "forward")
+                with self.assertRaises(RuntimeError): deploy.release_order(third, divergent)
+                with self.assertRaises(RuntimeError): deploy.release_order(third, "f" * 40)
+                with self.assertRaises(ValueError): deploy.release_order(third, "main")
+                for requested in (third, first):
+                    state = root / "state"
+                    state.mkdir(exist_ok=True)
+                    (state / "bootstrap.json").write_text('{"verified": true}')
+                    manifest = json.dumps({"phase": "stable", "active": "blue", "slots": {"blue": {"sha": third}}})
+                    (state / "release.json").write_text(manifest)
+                    args = SimpleNamespace(rollback=False, sha=requested, image="sha256:" + "a" * 64)
+                    with patch.object(deploy, "STATE", state), patch.object(deploy, "preflight_resources") as preflight, patch.object(deploy, "prepare_image") as image, patch.object(deploy, "verify_edge") as edge:
+                        deploy.deploy(args)
+                        preflight.assert_not_called()
+                        image.assert_not_called()
+                        edge.assert_not_called()
+                    self.assertEqual((state / "release.json").read_text(), manifest)
+            with patch.object(deploy, "ROOT", root / "missing"):
+                with self.assertRaises(RuntimeError): deploy.release_order(first, third)
+
     def test_immutable_image_types_reject_tags_and_other_registries(self):
         deploy=load("blue_green")
         self.assertTrue(deploy.is_immutable_image("sha256:"+"a"*64))

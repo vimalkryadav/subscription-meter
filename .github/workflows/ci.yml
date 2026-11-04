@@ -19,7 +19,11 @@ jobs:
           node-version: '22'
       - run: mvn --batch-mode --no-transfer-progress verify
       - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - run: node --test src/test/js/*.test.cjs
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - run: go test -race deploy/coder-cd/main.go deploy/coder-cd/main_test.go
       - run: bash -n scripts/receive_release.sh
       - run: docker build --label org.opencontainers.image.revision=${{ github.sha }} -t control-usage:ci .
       - uses: actions/upload-artifact@v4
