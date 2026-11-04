@@ -44,3 +44,5 @@ body{min-width:320px}
 .cu-admin .cu-table-hint{display:none;color:var(--cu-muted);font-size:11px;margin:10px 0}
 @media(max-width:1000px){.cu-admin .cu-table-hint:not([hidden]){display:block}}
 @media(min-width:761px) and (max-width:900px){.cu-admin .cu-thirds{grid-template-columns:1fr}}
+
+.cu-admin button.cu-primary:hover:not(:disabled){background:#85b0ff;border-color:#85b0ff;color:#07111f}
