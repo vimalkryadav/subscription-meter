@@ -59,7 +59,7 @@ export function Heading({ title, subtitle, children }: { title: string; subtitle
 }
 export function Panel({ title, children }: { title: string; children: ReactNode }) { return <section className="cu-panel"><h2>{title}</h2>{children}</section>; }
 export function Table({ headings, children, empty, label }: { headings: string[]; children: ReactNode; empty?: boolean; label?: string }) {
-  return <div className="cu-table-scroll" tabIndex={0} role="region" aria-label={label || headings.join(', ')}><table><thead><tr>{headings.map((heading, i) => <th key={i} scope="col">{heading || 'Actions'}</th>)}</tr></thead><tbody>{empty ? <tr><td colSpan={headings.length} className="cu-empty">No matching records.</td></tr> : children}</tbody></table></div>;
+  return <><p className="cu-table-hint" hidden={headings.length < 5}>Scroll horizontally to see all columns.</p><div className="cu-table-scroll" tabIndex={0} role="region" aria-label={label || headings.join(', ')}><table className={headings.length >= 5 ? 'cu-wide-table' : undefined}><thead><tr>{headings.map((heading, i) => <th key={i} scope="col">{heading || 'Actions'}</th>)}</tr></thead><tbody>{empty ? <tr><td colSpan={headings.length} className="cu-empty">No matching records.</td></tr> : children}</tbody></table></div></>;
 }
 export function Stat({ title, value, note }: { title: string; value: ReactNode; note?: ReactNode }) { return <article className="cu-stat"><h2>{title}</h2><strong>{value}</strong>{note && <p>{note}</p>}</article>; }
 export function Segments<T extends string | number>({ label, values, value, onChange }: { label: string; values: { value: T; label: string }[]; value: T; onChange: (value: T) => void }) {
