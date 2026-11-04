@@ -21,7 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 
-@SpringBootTest(properties={"spring.datasource.url=jdbc:h2:mem:portal;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE",
+@SpringBootTest(properties={"spring.sql.init.mode=always","spring.datasource.url=jdbc:h2:mem:portal;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE",
         "spring.datasource.username=sa","spring.datasource.password=","meter.audit.timescale-enabled=false","meter.mode=subscription"})
 class PortalFlowTest {
     private static final String ADMIN="test-admin-"+UUID.randomUUID();

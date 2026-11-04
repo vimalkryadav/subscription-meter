@@ -33,11 +33,11 @@
     }
     @messages {
         method POST
-        path /gateway/v1/messages /gateway/v1/messages/count_tokens
+        path /gateway/v1/messages /gateway/v1/messages/count_tokens /gateway/openai/v1/responses
     }
     @models {
         method GET
-        path /gateway/v1/models
+        path /gateway/v1/models /gateway/openai/v1/models
     }
     handle @messages {
         uri strip_prefix /gateway

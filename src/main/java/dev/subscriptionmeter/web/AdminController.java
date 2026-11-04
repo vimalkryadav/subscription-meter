@@ -19,11 +19,14 @@ public class AdminController {
     private final MemberService members;
     private final AnalyticsReader analytics;
     private final String mode, tokenFile;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final dev.subscriptionmeter.audit.AuditStore audit;
     @Value("${meter.audit.retention-days:30}") private int retentionDays;
     @Value("${meter.audit.timescale-enabled:false}") private boolean timescale;
     public AdminController(MemberService members, AnalyticsReader analytics, @Value("${meter.mode}") String mode,
-            @Value("${meter.upstream-token-file}") String tokenFile) {
-        this.members = members; this.analytics = analytics; this.mode = mode; this.tokenFile = tokenFile;
+            @Value("${meter.upstream-token-file}") String tokenFile,org.springframework.jdbc.core.JdbcTemplate jdbc,
+            dev.subscriptionmeter.audit.AuditStore audit) {
+        this.members = members; this.analytics = analytics; this.mode = mode; this.tokenFile = tokenFile;this.jdbc=jdbc;this.audit=audit;
     }
     public record NewMember(@NotBlank @Size(max=100) String name, @Min(1) @Max(600) int rpm,
                             @Min(1) @Max(20) int concurrency) {}
@@ -42,11 +45,19 @@ public class AdminController {
     }
     @GetMapping("/status") public Map<String, Object> status() {
         boolean configured = false;
-        try { configured = Files.isRegularFile(Path.of(tokenFile)) && !Files.readString(Path.of(tokenFile)).isBlank(); }
+        try { configured = Files.isRegularFile(Path.of(tokenFile)) && Files.size(Path.of(tokenFile))>0; }
         catch (java.io.IOException ignored) { }
-        return Map.of("mode", mode, "credentialConfigured", configured,
-                "subscriptionCompatibility", "unverified", "runtime", Runtime.version().toString(),
-                "limits", "single instance", "thread", Thread.currentThread().isVirtual() ? "virtual" : "platform",
-                "fullCapture",true,"detailRetentionDays",retentionDays,"timescaleEnabled",timescale);
+        var successful=jdbc.queryForList("SELECT started_at,model FROM requests WHERE provider='anthropic' AND path='/v1/messages' AND state='complete' AND status_code=200 ORDER BY started_at DESC LIMIT 1");
+        var latest=jdbc.queryForList("SELECT started_at,state,status_code FROM requests WHERE provider='anthropic' AND path='/v1/messages' ORDER BY started_at DESC LIMIT 1");
+        var status=new LinkedHashMap<String,Object>();
+        status.put("mode",mode);status.put("credentialConfigured",configured);
+        status.put("subscriptionCompatibility",successful.isEmpty()?"unverified":"generation observed");
+        status.put("lastSuccessfulGeneration",successful.isEmpty()?null:successful.getFirst());
+        status.put("latestGeneration",latest.isEmpty()?null:latest.getFirst());
+        status.put("runtime",Runtime.version().toString());status.put("limits","shared PostgreSQL admission");
+        status.put("thread",Thread.currentThread().isVirtual()?"virtual":"platform");
+        status.put("fullCapture",false);status.put("capturePolicy",audit.requiresAcknowledgedForwarding()?"bounded redacted capture; broker acknowledgement before forwarding":"bounded redacted capture; best effort after admission");
+        status.put("auditReady",audit.ready());status.put("detailRetentionDays",retentionDays);status.put("timescaleEnabled",timescale);
+        return status;
     }
 }

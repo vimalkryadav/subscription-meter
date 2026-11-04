@@ -17,12 +17,18 @@ public class GatewayAccessFilter extends OncePerRequestFilter {
     private final AuditStore store;
     private final CredentialRedactor redact;
     private final MeterRegistry metrics;
+    private final dev.subscriptionmeter.deployment.DeploymentState deployment;
     public GatewayAccessFilter(AuditStore store, CredentialRedactor redact, MeterRegistry metrics) {
-        this.store=store; this.redact=redact; this.metrics=metrics;
+        this(store,redact,metrics,new dev.subscriptionmeter.deployment.DeploymentState());
     }
-    @Override protected boolean shouldNotFilter(HttpServletRequest request) { return !request.getServletPath().startsWith("/v1/"); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public GatewayAccessFilter(AuditStore store,CredentialRedactor redact,MeterRegistry metrics,dev.subscriptionmeter.deployment.DeploymentState deployment){
+        this.store=store;this.redact=redact;this.metrics=metrics;this.deployment=deployment;
+    }
+    @Override protected boolean shouldNotFilter(HttpServletRequest request) { return !request.getServletPath().startsWith("/v1/")&&!request.getServletPath().startsWith("/openai/v1/"); }
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws IOException, ServletException {
+        try(var tracked=deployment.trackAudit()){
         long start=System.nanoTime();
         Map<String,List<String>> headers=new TreeMap<>();
         Collections.list(request.getHeaderNames()).forEach(name -> headers.put(name,Collections.list(request.getHeaders(name))));
@@ -36,7 +42,8 @@ public class GatewayAccessFilter extends OncePerRequestFilter {
         finally {
             try { store.access(context,(String)request.getAttribute(MEMBER),threw?500:response.getStatus(),
                     (System.nanoTime()-start)/1_000_000,redact.headers(headers),redact.query(context.query())); }
-            catch (RuntimeException e) { metrics.counter("meter.audit.failures").increment(); }
+            catch (RuntimeException e) { metrics.counter("meter.audit.failures").increment();deployment.persistenceFailed(); }
+        }
         }
     }
 }

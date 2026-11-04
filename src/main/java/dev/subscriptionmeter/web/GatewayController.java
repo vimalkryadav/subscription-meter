@@ -18,14 +18,20 @@ public class GatewayController {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final MemberService members;
     private final GatewayService gateway;
-    public GatewayController(MemberService members, GatewayService gateway) { this.members = members; this.gateway = gateway; }
+    private final dev.subscriptionmeter.limits.RequestBodyBudget bodyBudget;
+    public GatewayController(MemberService members, GatewayService gateway) { this(members,gateway,new dev.subscriptionmeter.limits.RequestBodyBudget()); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public GatewayController(MemberService members, GatewayService gateway,dev.subscriptionmeter.limits.RequestBodyBudget bodyBudget) {
+        this.members=members;this.gateway=gateway;this.bodyBudget=bodyBudget;
+    }
     @PostMapping({"/v1/messages", "/v1/messages/count_tokens"})
     public void post(HttpServletRequest request, HttpServletResponse response) throws IOException { forward(request, response); }
     @GetMapping("/v1/models")
     public void get(HttpServletRequest request, HttpServletResponse response) throws IOException { forward(request, response); }
-    private void forward(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    void forward(HttpServletRequest request, HttpServletResponse response) throws IOException {
         var member = members.authenticate(AdminAuthFilter.credential(request));
         request.setAttribute(GatewayAccessFilter.MEMBER,member.id());
+        try(var reservation=bodyBudget.reserve(request.getContentLengthLong())) {
         byte[] body = request.getInputStream().readNBytes(MAX_BODY + 1);
         if (body.length > MAX_BODY) throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE);
         String model = "unknown";
@@ -33,6 +39,7 @@ public class GatewayController {
             try {
                 JsonNode root = JSON.readTree(body);
                 if (root == null || !root.isObject()) throw new IllegalArgumentException();
+                if(request.getServletPath().equals("/openai/v1/responses"))dev.subscriptionmeter.provider.OpenAIPlanRequest.validate(root);
                 model = root.path("model").asString("unknown");
                 model = model.substring(0, Math.min(200, model.length()));
             } catch (RuntimeException e) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "JSON object required"); }
@@ -50,5 +57,6 @@ public class GatewayController {
                         response.getOutputStream().write(data, 0, length); response.flushBuffer();
                     }
                 });
+        }
     }
 }

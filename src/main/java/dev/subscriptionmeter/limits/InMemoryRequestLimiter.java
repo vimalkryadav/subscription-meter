@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Single-instance prototype. Replace this adapter with a distributed limiter before scaling replicas. */
-@Component
 public class InMemoryRequestLimiter implements RequestLimiter {
     private final Map<String, Deque<Long>> windows = new HashMap<>();
     private final Map<String, Integer> active = new HashMap<>();

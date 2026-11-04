@@ -1,4 +1,4 @@
-name: Java tests
+name: Application checks
 on:
   push:
   pull_request:
@@ -14,7 +14,14 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: mvn --batch-mode --no-transfer-progress verify
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - run: node --test src/test/js/*.test.cjs
+      - run: bash -n scripts/receive_release.sh
+      - run: docker build --label org.opencontainers.image.revision=${{ github.sha }} -t control-usage:ci .
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -31,6 +31,7 @@ public class JdkUpstreamTransport implements UpstreamTransport {
             throw new IllegalArgumentException("Subscription upstream must be https://api.anthropic.com");
     }
     public Reply send(String method, String path, Map<String, String> headers, byte[] body) throws IOException, InterruptedException {
+        long started=System.nanoTime();
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(origin + path)).timeout(Duration.ofSeconds(timeout))
                 .method(method, body.length == 0 ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofByteArray(body));
         headers.forEach(request::header);
@@ -39,7 +40,7 @@ public class JdkUpstreamTransport implements UpstreamTransport {
         HttpResponse<InputStream> response = client.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
         ScheduledFuture<?> deadline = deadlines.schedule(() -> {
             try { response.body().close(); } catch (IOException ignored) { }
-        }, timeout, TimeUnit.SECONDS);
+        }, Math.max(0, TimeUnit.SECONDS.toNanos(timeout)-(System.nanoTime()-started)), TimeUnit.NANOSECONDS);
         return new Reply() {
             public int status() { return response.statusCode(); }
             public Map<String, List<String>> headers() { return response.headers().map(); }
