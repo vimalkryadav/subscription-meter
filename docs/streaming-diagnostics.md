@@ -47,6 +47,17 @@ These small samples show incremental delivery was observed; they do not establis
 one transport is consistently faster or identify the earlier failure's cause.
 Production transport was therefore left unchanged.
 
+## Production diagnostic acceptance
+
+After deploying the administrator probe in release
+`374fec742fd3dcdee6940c6e7757a71901a2d18b`, all 20 concurrent probes through the
+actual public URL completed over browser HTTP/2 with incremental event delivery.
+First-event p95 was 118 ms, completion p95 was 3,120 ms, and delivery-span p95 was
+3,005 ms. The dashboard button separately received all 16 events, with a first
+event at 50 ms. These were fixed diagnostic streams, with no provider calls or
+usage records. The earlier generation-specific browser failure remains
+unexplained; this successful probe does not retroactively make that test pass.
+
 ## Reproducing in isolation
 
 Use `scripts/tests/tunnel_probe.py` on an unused loopback port in a separate
