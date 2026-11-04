@@ -20,6 +20,33 @@ CADDY = RUNTIME_ROOT / "deploy/public-gateway.Caddyfile"
 PORT = {"blue": 8183, "green": 8184}
 
 
+def is_local_image_id(image):
+    return isinstance(image,str) and re.fullmatch(r"sha256:[0-9a-f]{64}",image) is not None
+
+
+def is_immutable_image(image):
+    return is_local_image_id(image) or (isinstance(image,str) and re.fullmatch(
+        r"ghcr\.io/vimalkryadav/control-usage@sha256:[0-9a-f]{64}",image) is not None)
+
+
+def prepare_image(image,sha,require_audit_contract=False):
+    """Registry digests are pulled; local immutable IDs must already exist on this host."""
+    if not is_immutable_image(image) or not re.fullmatch(r"[0-9a-f]{40}",sha or ""):
+        raise ValueError("An immutable control-usage registry digest or full local image ID and Git SHA are required")
+    local=is_local_image_id(image)
+    if not local:
+        run(["docker","pull",image],capture_output=True)
+    inspected=json.loads(run(["docker","image","inspect",image],capture_output=True).stdout)[0]
+    if local and inspected.get("Id")!=image:
+        raise RuntimeError("Local image ID does not match the requested immutable image")
+    labels=inspected.get("Config",{}).get("Labels",{}) or {}
+    if labels.get("org.opencontainers.image.revision")!=sha:
+        raise RuntimeError("Image revision label does not match requested release")
+    if (local or require_audit_contract) and labels.get("dev.control-usage.audit-contract")!="1":
+        raise RuntimeError("Image does not declare supported audit contract1")
+    return inspected
+
+
 def run(args, **kwargs):
     if args and args[0]=="docker" and os.environ.get("CONTROL_USAGE_DOCKER_SUDO")=="1":
         names="BLUE_IMAGE,BLUE_RELEASE,GREEN_IMAGE,GREEN_RELEASE,AUDIT_WORKER_IMAGE,METER_AUDIT_TRANSPORT,METER_AUDIT_KAFKA_BOOTSTRAP_SERVERS,METER_AUDIT_KAFKA_TOPIC,METER_AUDIT_KAFKA_GROUP,METER_AUDIT_KAFKA_PARTITIONS"
@@ -57,7 +84,7 @@ def release_env(manifest):
     env["METER_AUDIT_TRANSPORT"]=transport
     if transport=="kafka":
         image=audit.get("workerImage","")
-        if not re.fullmatch(r"ghcr\.io/vimalkryadav/control-usage@sha256:[0-9a-f]{64}",image) or audit.get("contractVersion")!=1:
+        if not is_immutable_image(image) or audit.get("contractVersion")!=1:
             raise ValueError("Kafka deployment requires a pinned shared worker image and audit contractVersion1")
         env["AUDIT_WORKER_IMAGE"]=image
         env["METER_AUDIT_KAFKA_BOOTSTRAP_SERVERS"]="audit-kafka:9092"
@@ -65,6 +92,8 @@ def release_env(manifest):
         env["METER_AUDIT_KAFKA_GROUP"]=audit.get("group","control-usage-audit-v1")
         env["METER_AUDIT_KAFKA_PARTITIONS"]=str(audit.get("partitions",1))
     for color, release in manifest.get("slots", {}).items():
+        if color not in PORT or not is_immutable_image(release.get("image")) or not re.fullmatch(r"[0-9a-f]{40}",release.get("sha", "")):
+            raise ValueError("Release slots require a known color, immutable image and full Git SHA")
         env[color.upper()+"_IMAGE"] = release["image"]
         env[color.upper()+"_RELEASE"] = release["sha"]
     return env
@@ -192,7 +221,8 @@ def verify_shared_audit(manifest,env):
         running=run(["docker","inspect","--format","{{.State.Running}}",container],capture_output=True).stdout.strip()
         if running!="true":raise RuntimeError("Shared audit service is not running: "+service)
         if service=="audit-worker":
-            image=run(["docker","inspect","--format","{{.Config.Image}}",container],capture_output=True).stdout.strip()
+            field="{{.Image}}" if is_local_image_id(audit["workerImage"]) else "{{.Config.Image}}"
+            image=run(["docker","inspect","--format",field,container],capture_output=True).stdout.strip()
             if image!=audit["workerImage"]:
                 raise RuntimeError("Running audit worker differs from the pinned deployment cohort")
             contract=run(["docker","image","inspect","--format",'{{index .Config.Labels "dev.control-usage.audit-contract"}}',image],capture_output=True).stdout.strip()
@@ -220,8 +250,8 @@ def deploy(args):
                 raise RuntimeError("No compatible previous release recorded")
             release = previous["release"]
         else:
-            if not re.fullmatch(r"ghcr\.io/vimalkryadav/control-usage@sha256:[0-9a-f]{64}", args.image or ""):
-                raise ValueError("An immutable control-usage GHCR image digest is required")
+            if not is_immutable_image(args.image):
+                raise ValueError("An immutable control-usage GHCR digest or full local image ID is required")
             if not re.fullmatch(r"[0-9a-f]{40}", args.sha or ""):
                 raise ValueError("Full Git SHA required")
             release = {"image": args.image, "sha": args.sha}
@@ -232,12 +262,7 @@ def deploy(args):
             checked_out=run(["git","rev-parse","HEAD"],capture_output=True).stdout.strip()
             if checked_out!=release["sha"]:
                 raise RuntimeError("Deployment checkout must match image SHA before migrations")
-        run(["docker", "pull", release["image"]], capture_output=True)
-        inspected=json.loads(run(["docker","image","inspect",release["image"]],capture_output=True).stdout)[0]
-        if inspected.get("Config",{}).get("Labels",{}).get("org.opencontainers.image.revision")!=release["sha"]:
-            raise RuntimeError("Image revision label does not match requested release")
-        if manifest.get("audit",{}).get("transport")=="kafka" and inspected.get("Config",{}).get("Labels",{}).get("dev.control-usage.audit-contract")!="1":
-            raise RuntimeError("Gateway and shared worker audit contracts differ")
+        prepare_image(release["image"],release["sha"],manifest.get("audit",{}).get("transport")=="kafka")
         if not args.rollback:
             run(["python3", "scripts/migrate.py", "--apply"])
         install_assets(release["image"], release["sha"])
