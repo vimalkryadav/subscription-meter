@@ -61,7 +61,9 @@ public class AccountingService {
             if(locked.isEmpty()) return;
             var r=locked.getFirst();if("pending".equals(r.get("state")))return;
             var old=jdbc.queryForList("SELECT * FROM request_assessments WHERE request_id=?",id);
-            var bodies=jdbc.queryForList("SELECT SUBSTRING(request_body,1,65536) AS body,response_headers,started_at,upstream_headers_ms,capture_state,event_count FROM request_details WHERE request_id=? ORDER BY started_at DESC LIMIT 1",id);
+            // Select a complete bounded document, never a syntactically broken prefix.
+            // Oversized captures remain available to the explorer but classify as unknown.
+            var bodies=jdbc.queryForList("SELECT CASE WHEN LENGTH(request_body)<=? THEN request_body ELSE NULL END AS body,response_headers,started_at,upstream_headers_ms,capture_state,event_count FROM request_details WHERE request_id=? ORDER BY started_at DESC LIMIT 1",WorkClassifier.MAX_BODY_CHARS,id);
             Map<String,Object> capture=bodies.isEmpty()?Map.of():bodies.getFirst();
             if(bodies.isEmpty()&&!old.isEmpty()&&Objects.equals(old.getFirst().get("source_usage"),r.get("usage_components"))
                     &&Objects.equals(old.getFirst().get("source_complete"),r.get("usage_complete")))return;
@@ -69,9 +71,10 @@ public class AccountingService {
             backfillUsage(r);
             // Complete historical usage is persisted; partial observations remain retryable when capture changes.
             if(Boolean.TRUE.equals(r.get("usage_complete"))){sourceUsage=r.get("usage_components");sourceComplete=true;}
-            String fingerprint=digest(Objects.toString(r.get("usage_components"),"")+":"+r.get("usage_complete")
+            String fingerprint=digest(WorkClassifier.VERSION+":"+Objects.toString(r.get("usage_components"),"")+":"+r.get("usage_complete")
                 +":"+capture.get("started_at")+":"+capture.get("capture_state")+":"+capture.get("event_count"));
-            if(!old.isEmpty() && fingerprint.equals(old.getFirst().get("usage_digest"))){
+            if(!old.isEmpty() && WorkClassifier.VERSION.equals(old.getFirst().get("classifier_version"))
+                    && fingerprint.equals(old.getFirst().get("usage_digest"))){
                 jdbc.update("UPDATE request_assessments SET source_usage=?,source_complete=?,source_capture_state=?,source_event_count=?,source_detail_started_at=? WHERE request_id=?",
                     sourceUsage,sourceComplete,capture.get("capture_state"),capture.get("event_count"),capture.get("started_at"),id);return;
             }
@@ -129,10 +132,10 @@ public class AccountingService {
             SELECT r.id FROM requests r LEFT JOIN request_assessments a ON a.request_id=r.id
             LEFT JOIN request_details d ON d.request_id=r.id AND d.started_at=(SELECT MAX(latest.started_at) FROM request_details latest WHERE latest.request_id=r.id)
             WHERE r.state<>'pending' AND (a.request_id IS NULL OR a.source_usage IS DISTINCT FROM r.usage_components
-                OR a.source_complete IS DISTINCT FROM r.usage_complete OR (d.request_id IS NOT NULL AND (a.source_capture_state IS DISTINCT FROM d.capture_state
+                OR a.source_complete IS DISTINCT FROM r.usage_complete OR (d.request_id IS NOT NULL AND (a.classifier_version IS DISTINCT FROM ? OR a.source_capture_state IS DISTINCT FROM d.capture_state
                 OR a.source_event_count IS DISTINCT FROM d.event_count OR a.source_detail_started_at IS DISTINCT FROM d.started_at)))
             ORDER BY r.started_at,r.id LIMIT 25
-            """,String.class);
+            """,String.class,WorkClassifier.VERSION);
         for(String id:ids){
             try{project(id);}catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Accounting record projection delayed ({})",failure.getClass().getSimpleName());}
         }
@@ -156,6 +159,7 @@ public class AccountingService {
                 "confidence",a.get("manual_category")==null?a.get("confidence"):"manual","version",a.get("classifier_version")));
         }
         out.put("note","API-equivalent estimate; not a subscription bill. Unknown components are excluded from the known subtotal.");
+        out.put("classificationNote","Local rule suggestion from at most 8,192 characters of the latest user instruction in a complete capture up to 4 Mi characters. System reminders, tool schemas and tool results are excluded. Missing, oversized, malformed or unrecognized content remains unknown. Manual overrides are preserved; categories do not measure productivity.");
         return out;
     }
     public void classify(String id,String category,String actor) {

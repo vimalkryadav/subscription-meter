@@ -72,15 +72,27 @@ The packaged worker also passed independent process startup: consumer-group
 bootstrap, readiness, real BEGIN projection and metrics. A malformed record
 stopped the process without logging its raw payload.
 
-## Remaining external acceptance
+## Deployed acceptance update — 2026-11-05
 
-- Apply the reviewed release on Coder only after the initial admission-pause
-  exception is authorized; retain the sole administrator and all live data.
-- Confirm the actual Cloudflare URL, signed-out/member/admin boundaries and
-  long-running streaming behavior after cutover.
-- Browser-based visual/accessibility verification was unavailable in this run.
-  JavaScript interaction, markup and API tests do not replace visual inspection.
-- The optional Codex/SIWC adapter remains disabled. Hosted eligibility,
-  dedicated credential provisioning and real end-to-end generation are unverified.
-- GitHub deployment needs a dedicated Coder automation credential. No personal
-  local token has been copied into repository secrets.
+The initial admission pause and migration have completed. Kafka audit transport,
+shared coordination and automatic GitHub-to-Coder blue/green deployment are live.
+The dedicated scoped automation credential is installed. PR7 deployed release
+`f93744e440a1bfa0b46f13c61eda6ab91f17648f`; readiness, audit readiness, unchanged
+shared resources and the sole administrator were verified after cutover.
+
+Playwright over CDP verified all seven administrator views at 1440, 768 and 390px,
+using deployed assets after removing local preview overrides. Reporting APIs
+returned200, document overflow and clipped chart labels were absent, custom
+selects worked, and the browser had no console errors or warnings. Signed-out
+admin routes remained protected. These checks do not replace ongoing usability
+or accessibility review.
+
+Remaining external acceptance:
+
+- Sustained real-provider traffic and long-running streams across a live cutover
+  have not been validated at20-user load. Local byte-exact stream switch/rollback
+  tests are separate evidence and exclude Cloudflare and provider behavior.
+- Codex remains disabled by the owner's choice. Dedicated hosted-app setup and
+  real end-to-end generation/tool continuation remain unverified.
+- Quick Tunnel and single-workspace availability limits remain. Backups, health
+  checks and operational limits are described in [operations](operations.md).

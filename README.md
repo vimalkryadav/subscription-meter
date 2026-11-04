@@ -342,7 +342,8 @@ Timescale policies retain details/events/access for 30 days and metadata for
 2 GB. Kafka durability, projection lag, retention and failure behavior are
 described in [the audit pipeline guide](docs/audit-pipeline.md). This is one
 workspace with local volumes; blue/green does not provide host/database/tunnel
-high availability. No recurring database backup schedule has been installed.
+high availability. Daily private database backups and weekly isolated restore drills are managed by systemd.
+See [operations and backup limits](docs/operations.md); these local copies do not protect against workspace or disk loss.
 
 ## Useful operational metrics
 

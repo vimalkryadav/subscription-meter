@@ -16,6 +16,7 @@ backups/
 
 # Runtime deployment manifests, immutable assets and local locks.
 deploy/state/
+deploy/operations/
 src/main/resources/static/releases/
 src/main/resources/static/assets/releases/
 

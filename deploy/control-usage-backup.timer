@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily control-usage database backup
+
+[Timer]
+OnCalendar=*-*-* 01:15:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=control-usage-backup.service
+
+[Install]
+WantedBy=timers.target
