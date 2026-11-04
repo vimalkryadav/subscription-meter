@@ -17,12 +17,28 @@ public final class OpenAIPlanRequest {
             throw new IllegalArgumentException("ChatGPT plan requests require store:false and stream:true");
         if(!body.path("input").isArray())throw new IllegalArgumentException("ChatGPT plan requests require input history as an array");
         for(String key:UNSUPPORTED)if(body.has(key))throw new IllegalArgumentException("Unsupported ChatGPT plan request field: "+key);
-        for(JsonNode item:body.path("input"))if(item.path("role").asString().equals("system"))throw new IllegalArgumentException("Use instructions or developer messages");
-        if(body.has("tools")&&!body.path("tools").isArray())throw new IllegalArgumentException("tools must be an array");
-        for(JsonNode tool:body.path("tools")){
+        for(JsonNode item:body.path("input")){
+            if(!item.isObject())throw new IllegalArgumentException("input items must be objects");
+            if(item.path("role").asString().equals("system"))throw new IllegalArgumentException("Use instructions or developer messages");
+            if(item.path("type").asString().equals("additional_tools"))validateTools(item.path("tools"),true);
+            if(item.path("content").isArray())for(JsonNode part:item.path("content")){
+                if(Set.of("input_audio","input_video","video","audio").contains(part.path("type").asString()))
+                    throw new IllegalArgumentException("Audio/video inputs are unsupported for ChatGPT plan requests");
+            }
+        }
+        if(body.has("tools"))validateTools(body.path("tools"),false);
+    }
+    private static void validateTools(JsonNode tools,boolean grouped){
+        if(!tools.isArray())throw new IllegalArgumentException("tools must be an array");
+        for(JsonNode tool:tools){
+            if(!tool.isObject()||!tool.path("type").isString())throw new IllegalArgumentException("A tool type is required");
             String type=tool.path("type").asString();
             if(UNSUPPORTED_TOOLS.contains(type))throw new IllegalArgumentException("Unsupported ChatGPT plan tool: "+type);
-            if(type.equals("function")||type.equals("custom"))throw new IllegalArgumentException("Group function/custom tools in namespaces or additional_tools input items");
+            if(type.equals("namespace")){
+                if(grouped)throw new IllegalArgumentException("Nested tool namespaces are unsupported");
+                validateTools(tool.path("tools"),true);
+            }
+            if(!grouped&&(type.equals("function")||type.equals("custom")))throw new IllegalArgumentException("Group function/custom tools in namespaces or additional_tools input items");
         }
     }
 }

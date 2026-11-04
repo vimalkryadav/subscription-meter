@@ -64,4 +64,45 @@ class OpenAIProtocolTest {
         assertThat(GatewayProtocols.forPath("/openai/v1/responses").id()).isEqualTo("openai");
         assertThat(GatewayProtocols.forPath("/openai/v1/responses").inference("/openai/v1/responses")).isTrue();
     }
+    @Test void terminalSnapshotsCannotBeMergedIntoInventedCompleteUsage(){
+        var observer=new OpenAIUsageObserver(true);
+        feed(observer,"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":4}}}\n\n");
+        feed(observer,"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"output_tokens\":6}}}\n\n");
+        assertThat(observer.complete()).isFalse();assertThat(observer.snapshot().components()).doesNotContainKey("output_tokens");
+    }
+    @Test void contradictoryCompletedStatusInvalidTotalsAndOverflowRemainPartial(){
+        for(String response:java.util.List.of(
+                "{\"status\":\"incomplete\",\"usage\":{\"input_tokens\":4,\"output_tokens\":6}}",
+                "{\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":6,\"total_tokens\":9}}",
+                "{\"status\":\"completed\",\"usage\":{\"input_tokens\":9223372036854775807,\"output_tokens\":6,\"total_tokens\":0}}",
+                "{\"status\":\"completed\",\"error\":{\"code\":\"fixture\"},\"usage\":{\"input_tokens\":4,\"output_tokens\":6}}")){
+            var observer=new OpenAIUsageObserver(true);feed(observer,"data: {\"type\":\"response.completed\",\"response\":"+response+"}\n\n");
+            assertThat(observer.complete()).isFalse();
+        }
+    }
+    @Test void oversizedAndTruncatedFramesCannotBecomeComplete(){
+        var observer=new OpenAIUsageObserver(true);
+        String oversized="data: {\"type\":\"response.output_text.delta\",\"delta\":\""+"x".repeat(512*1024)+"\"}\n\n";
+        observer.accept(oversized.getBytes(StandardCharsets.UTF_8),oversized.length());
+        feed(observer,"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n");
+        assertThat(observer.complete()).isFalse();
+        var truncated=new OpenAIUsageObserver(true);
+        feed(truncated,"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n");
+        assertThat(truncated.complete()).isFalse();
+    }
+    @Test void rejectsUnsupportedNestedToolsAndMediaWithoutChangingValidHistory(){
+        for(String tools:java.util.List.of(
+                "[{\"type\":\"namespace\",\"name\":\"test\",\"tools\":[{\"type\":\"mcp\"}]}]",
+                "[{\"type\":\"namespace\",\"name\":\"test\",\"tools\":[{\"type\":\"tool_search\"}]}]",
+                "[null]")){
+            var invalid=JSON.readTree(VALID.substring(0,VALID.length()-1)+",\"tools\":"+tools+"}");
+            assertThatThrownBy(()->OpenAIPlanRequest.validate(invalid)).isInstanceOf(IllegalArgumentException.class);
+        }
+        var additional=JSON.readTree("{\"model\":\"fixture\",\"store\":false,\"stream\":true,\"input\":[{\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[{\"type\":\"custom\",\"name\":\"local_tool\"}]}]}");
+        OpenAIPlanRequest.validate(additional);
+        var unsupported=JSON.readTree(additional.toString().replace("\"custom\"","\"file_search\""));
+        assertThatThrownBy(()->OpenAIPlanRequest.validate(unsupported)).isInstanceOf(IllegalArgumentException.class);
+        var audio=JSON.readTree(VALID.replace("\"test\"","[{\"type\":\"input_audio\",\"input_audio\":{}}]"));
+        assertThatThrownBy(()->OpenAIPlanRequest.validate(audio)).isInstanceOf(IllegalArgumentException.class);
+    }
 }

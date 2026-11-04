@@ -16,10 +16,14 @@ public final class OpenAIPlanTransport implements UpstreamTransport,AutoCloseabl
     private final UpstreamCredentialProvider credentials;
     private final int timeout;
     public OpenAIPlanTransport(UpstreamCredentialProvider credentials,String mode,String origin,int timeout){
+        this(credentials,mode,origin,timeout,null);
+    }
+    // Test seam preserves the exact production destination, headers and request body without real inference.
+    OpenAIPlanTransport(UpstreamCredentialProvider credentials,String mode,String origin,int timeout,HttpClient client){
         if(!mode.equals("siwc-plan")||!origin.equals("https://api.openai.com"))throw new IllegalArgumentException("Only the public SIWC plan route is supported");
         if(timeout<1||timeout>3600)throw new IllegalArgumentException("Invalid OpenAI timeout");
         this.credentials=credentials;this.timeout=timeout;
-        this.client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).followRedirects(HttpClient.Redirect.NEVER).build();
+        this.client=client==null?HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).followRedirects(HttpClient.Redirect.NEVER).build():client;
         this.deadlines=Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon(true).factory());
     }
     public Reply send(String method,String path,Map<String,String> headers,byte[] body)throws IOException,InterruptedException{
@@ -27,12 +31,13 @@ public final class OpenAIPlanTransport implements UpstreamTransport,AutoCloseabl
             throw new IOException("Unsupported OpenAI plan route");
         if(method.equals("POST"))OpenAIPlanRequest.validate(JsonMapper.builder().build().readTree(body));
         String token=credentials.bearerToken();
-        if(token==null||token.isBlank()||token.length()>16384||token.startsWith("sk-")||token.startsWith("sm_")||token.startsWith("Bearer ")||token.contains("\n")||token.contains("\r"))
-            throw new IOException("A dedicated SIWC OAuth access token is required");
+        OpenAIPlanCredentialFile.validate(token);
         long started=System.nanoTime();
         var request=HttpRequest.newBuilder(URI.create("https://api.openai.com"+path)).timeout(Duration.ofSeconds(timeout))
                 .method(method,body.length==0?HttpRequest.BodyPublishers.noBody():HttpRequest.BodyPublishers.ofByteArray(body));
-        headers.forEach((key,value)->{if(Set.of("content-type","accept","user-agent").contains(key.toLowerCase(Locale.ROOT)))request.header(key,value);});
+        headers.forEach((key,value)->{if(Set.of("user-agent").contains(key.toLowerCase(Locale.ROOT)))request.header(key,value);});
+        request.header("Accept",method.equals("POST")?"text/event-stream":"application/json");
+        if(method.equals("POST"))request.header("Content-Type","application/json");
         request.header("Authorization","Bearer "+token);request.header("Accept-Encoding","identity");
         var response=client.send(request.build(),HttpResponse.BodyHandlers.ofInputStream());
         var deadline=deadlines.schedule(()->{try{response.body().close();}catch(IOException ignored){}},

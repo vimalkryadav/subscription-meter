@@ -15,6 +15,7 @@ public final class OpenAIUsageObserver implements UsageObserver {
     private final ByteArrayOutputStream line=new ByteArrayOutputStream();
     private final StringBuilder event=new StringBuilder();
     private final Map<String,Long> components=new HashMap<>();
+    private JsonNode terminal;
     private boolean completed,failed,malformed,discard,incomplete;
     public OpenAIUsageObserver(boolean streaming){this.streaming=streaming;}
     public void accept(byte[] bytes,int length){
@@ -36,12 +37,23 @@ public final class OpenAIUsageObserver implements UsageObserver {
         if(data.strip().equals("[DONE]"))return; // Never substitutes for response.completed.
         try{
             JsonNode root=JSON.readTree(data);String type=root.path("type").asString();
-            if(type.equals("response.completed")){read(root.path("response").path("usage"));completed=true;}
-            else if(type.equals("response.failed")||type.equals("error")){read(root.path("response").path("usage"));failed=true;}
-            else if(type.equals("response.incomplete")){read(root.path("response").path("usage"));incomplete=true;}
+            if(Set.of("response.completed","response.failed","response.incomplete","error").contains(type)){
+                if(type.equals("response.failed")||type.equals("error"))failed=true;
+                if(type.equals("response.incomplete"))incomplete=true;
+                if(terminal!=null){if(!terminal.equals(root))malformed=true;return;}
+                terminal=root;
+                JsonNode response=root.path("response");read(response.path("usage"));
+                if(type.equals("response.completed")){
+                    completed=response.path("status").asString().equals("completed");
+                    if(response.has("error")&&!response.path("error").isNull())failed=true;
+                }else if(type.equals("response.incomplete"))incomplete=true;
+                else failed=true;
+            }
         }catch(RuntimeException e){malformed=true;}
     }
     private void read(JsonNode usage){
+        components.clear();
+        if(!usage.isNull()&&!usage.isMissingNode()&&!usage.isObject())malformed=true;
         field(usage,"input_tokens","input_tokens");field(usage,"output_tokens","output_tokens");field(usage,"total_tokens","total_tokens");
         JsonNode input=usage.path("input_tokens_details"),writes=input.path("cache_write_tokens_details");
         field(input,"cached_tokens","input_tokens_details.cached_tokens");field(input,"cache_write_tokens","input_tokens_details.cache_write_tokens");
@@ -51,6 +63,10 @@ public final class OpenAIUsageObserver implements UsageObserver {
         if(value("input_tokens_details.cached_tokens")>value("input_tokens")
                 || value("input_tokens_details.cache_write_tokens")>value("input_tokens")-value("input_tokens_details.cached_tokens")
                 || value("output_tokens_details.reasoning_tokens")>value("output_tokens"))malformed=true;
+        if(components.containsKey("total_tokens")&&components.containsKey("input_tokens")&&components.containsKey("output_tokens")){
+            try{if(value("total_tokens")!=Math.addExact(value("input_tokens"),value("output_tokens")))malformed=true;}
+            catch(ArithmeticException overflow){malformed=true;}
+        }
     }
     private void field(JsonNode source,String field,String component){
         JsonNode node=source.path(field);if(node.isMissingNode()||node.isNull())return;
