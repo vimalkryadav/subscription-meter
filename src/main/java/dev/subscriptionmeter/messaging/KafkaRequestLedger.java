@@ -11,7 +11,7 @@ import java.util.*;
 /** Admission remains database-backed; terminal usage survives a projection-database outage. */
 @Repository @Primary
 @ConditionalOnProperty(name="meter.audit.transport",havingValue="kafka")
-public final class KafkaRequestLedger implements RequestLedger {
+public class KafkaRequestLedger implements RequestLedger {
     private final JdbcRequestLedger admission;
     private final AuditPublisher publisher;
     public KafkaRequestLedger(JdbcRequestLedger admission,AuditPublisher publisher){this.admission=admission;this.publisher=publisher;}

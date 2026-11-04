@@ -8,3 +8,7 @@ scrape_configs:
       credentials_file: /run/secrets/metrics-token
     static_configs:
       - targets: [app-blue:8180, app-green:8180]
+  - job_name: control-usage-audit-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: [audit-worker:9091]
