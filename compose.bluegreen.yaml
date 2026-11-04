@@ -14,6 +14,9 @@ services:
     environment:
       RELEASE_ID: ${BLUE_RELEASE:-unconfigured}
       DEPLOY_TOKEN_FILE: /run/secrets/deploy-token
+      METER_OPERATIONS_REPORT: /run/control-usage-operations/report.json
+    volumes:
+      - ./deploy/operations:/run/control-usage-operations:ro
     secrets: [deploy-token]
     stop_grace_period: 370s
   app-green:
@@ -27,6 +30,9 @@ services:
     environment:
       RELEASE_ID: ${GREEN_RELEASE:-unconfigured}
       DEPLOY_TOKEN_FILE: /run/secrets/deploy-token
+      METER_OPERATIONS_REPORT: /run/control-usage-operations/report.json
+    volumes:
+      - ./deploy/operations:/run/control-usage-operations:ro
     secrets: [deploy-token]
     stop_grace_period: 370s
 secrets:

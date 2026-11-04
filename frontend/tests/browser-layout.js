@@ -9,6 +9,7 @@ async (page) => {
     ['Access requests', '/admin/key-requests'],
     ['Accounts & sessions', '/admin/accounts?'],
     ['Connection', '/admin/status'],
+    ['Operations', '/admin/operations'],
   ];
   await page.getByRole('navigation', { name: 'Admin navigation' }).getByRole('link', { name: 'Connection', exact: true }).click();
   await page.getByRole('heading', { name: 'Connection', exact: true }).waitFor();

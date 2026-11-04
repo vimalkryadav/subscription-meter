@@ -73,6 +73,36 @@ class AccountingTest {
         assertThat(c.classify("incomplete json").category()).isEqualTo("unknown");
         assertThat(c.classify("{\"messages\":[{\"role\":\"user\",\"content\":\"create tests\"}]}").category()).isEqualTo("mixed");
     }
+    @Test void classifierVersionRefreshReadsCompleteLargeCaptureAndPreservesOverridesAndPrices(){
+        request("native","alice","{\"input\":100,\"output\":20,\"cache_read\":0,\"cache_write\":0}",true);
+        service.project("native");service.classify("native","testing","owner");
+        String body="{\"tools\":[{\"name\":\"fixture\",\"description\":\""+"deploy review create ".repeat(6000)+"\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"debug this crash\"}]}]}";
+        assertThat(body.length()).isGreaterThan(65536);
+        jdbc.update("UPDATE request_details SET request_body=? WHERE request_id='native'",body);
+        // Emulate an existing assessment made by the prior prefix-truncating classifier.
+        jdbc.update("UPDATE request_assessments SET category='unknown',classifier_version='work-rules-v1' WHERE request_id='native'");
+        jdbc.update("INSERT INTO accounting_price_versions(id,provider,model,valid_from,currency,rates_json,source_url) VALUES('new-classifier-price','anthropic','claude-opus-5-5',?,'USD',?,'https://example.invalid/prices')",Timestamp.from(from.plusMillis(1)),"{\"input\":\"999\",\"output\":\"999\"}");
+        assertThat(service.projectPending()).isEqualTo(1);
+        var detail=service.detail("native");
+        assertThat(detail.get("classification").toString()).contains("category=testing","suggestedCategory=debugging","admin_override",WorkClassifier.VERSION);
+        assertThat(detail.get("estimate").toString()).contains("price-v1","0.0008000000");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_action_log",Integer.class)).isEqualTo(1);
+        assertThat(service.projectPending()).isZero();
+    }
+    @Test void absentAndOversizedCaptureDoNotLoopOrInventClassificationDuringVersionRefresh(){
+        request("expired","alice","{}",false);service.project("expired");
+        jdbc.update("UPDATE request_assessments SET classifier_version='work-rules-v1' WHERE request_id='expired'");
+        jdbc.update("DELETE FROM request_details WHERE request_id='expired'");
+        assertThat(service.projectPending()).isZero();
+        service.project("expired");
+        assertThat(service.detail("expired").get("classification").toString()).contains("debugging","work-rules-v1");
+        request("oversized","alice","{}",false);
+        String body="{\"messages\":[{\"role\":\"user\",\"content\":\"debug this crash\"}],\"extra\":\""+"x".repeat(WorkClassifier.MAX_BODY_CHARS)+"\"}";
+        jdbc.update("UPDATE request_details SET request_body=? WHERE request_id='oversized'",body);
+        assertThat(service.projectPending()).isEqualTo(1);
+        assertThat(service.detail("oversized").get("classification").toString()).contains("category=unknown",WorkClassifier.VERSION);
+        assertThat(service.projectPending()).isZero();
+    }
     @Test void lateCaptureAndUsageRefreshProjectionWithoutLosingManualOverrideOrPriceVersion(){
         request("late","alice","{\"input\":100}",false);
         jdbc.update("DELETE FROM request_details WHERE request_id='late'");
