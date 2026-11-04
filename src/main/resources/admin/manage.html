@@ -31,14 +31,16 @@
 <div class="workspace">
   <div id="error" role="alert"></div>
   <main id="content" hidden tabindex="-1">
+    <div id="gatewaySetup" class="info-notice" role="status" hidden>No active member keys. <a href="#view/members">Create a member key</a>, then send requests through this gateway to populate usage.</div>
     <section data-page="metrics">
       <div class="page-heading"><div><p class="eyebrow">GATEWAY OBSERVABILITY</p><h1>Metrics</h1><p>Traffic, response timings, and the members and models behind each request.</p></div><button id="refreshMetrics">Refresh</button></div>
       <div class="toolbar">
-        <div class="segments" role="group" aria-label="Metrics time window" id="metricWindows"><button data-hours="1" aria-pressed="false">1 h</button><button data-hours="6" aria-pressed="true">6 h</button><button data-hours="24" aria-pressed="false">24 h</button><button data-hours="168" aria-pressed="false">7 d</button></div>
+        <div class="segments" role="group" aria-label="Metrics time window" id="metricWindows"><button data-hours="1" aria-pressed="false">1 h</button><button data-hours="6" aria-pressed="false">6 h</button><button data-hours="24" aria-pressed="true">24 h</button><button data-hours="168" aria-pressed="false">7 d</button></div>
         <div class="segments" role="group" aria-label="Timing percentile" id="metricPercentiles"><button data-percentile="p50" aria-pressed="false">p50</button><button data-percentile="p95" aria-pressed="true">p95</button><button data-percentile="p99" aria-pressed="false">p99</button></div>
         <span id="metricsUpdated" class="muted" aria-live="polite">Loading metrics…</span>
       </div>
       <div id="metricsError" class="notice" role="alert" hidden></div>
+      <div id="metricsEmpty" class="info-notice" role="status" hidden><span id="metricsEmptyText"></span> <button id="showWeek" type="button">View last 7 days</button></div>
       <div id="metricsData" aria-busy="true">
         <div class="grid stats">
           <article class="stat"><h2>Requests</h2><strong id="totalRequests">—</strong><span id="requestSummary">In the selected window</span></article>

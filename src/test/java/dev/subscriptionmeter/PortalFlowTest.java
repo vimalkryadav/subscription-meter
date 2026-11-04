@@ -161,6 +161,27 @@ class PortalFlowTest {
             assertThat(mvc.perform(get("/admin/status").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
         } finally { jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id()); }
     }
+    @Test void dashboardDocumentRequiresAnActiveAdminSession() throws Exception {
+        for(String path:List.of("/manage","/manage/")) {
+            var signedOut=mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path)).andReturn().getResponse();
+            assertThat(signedOut.getStatus()).isEqualTo(303);
+            assertThat(signedOut.getHeader("Location")).isEqualTo("/");
+            assertThat(signedOut.getContentAsString()).doesNotContain("metricsData");
+        }
+        Login owner=register(),member=register();
+        jdbc.update("UPDATE portal_accounts SET role='admin' WHERE id=?",owner.id());
+        try {
+            assertThat(mvc.perform(get("/manage").cookie(member.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+            var page=mvc.perform(get("/manage").cookie(owner.cookie())).andReturn().getResponse();
+            assertThat(page.getStatus()).isEqualTo(200);
+            assertThat(page.getHeader("Cache-Control")).contains("no-store");
+            assertThat(page.getContentAsString()).contains("metricsData","control-usage");
+            assertThat(mvc.perform(get("/manage.html")).andReturn().getResponse().getStatus()).isEqualTo(404);
+            sessions.logout(owner.cookie().getValue());
+            assertThat(mvc.perform(get("/manage").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(303);
+            assertThat(mvc.perform(get("/manage").cookie(new Cookie("meter_session","invalid"))).andReturn().getResponse().getStatus()).isEqualTo(303);
+        } finally { jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id()); }
+    }
     @Test void rejectionCanBeResubmittedAndLimitsAreValidated() throws Exception {
         Login user=register();String id=request(user);
         access.decide(id,false,60,4);

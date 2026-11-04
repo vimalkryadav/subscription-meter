@@ -14,10 +14,9 @@
         root * /srv
         file_server
     }
-    handle /manage {
-        root * /srv
-        rewrite * /manage.html
-        file_server
+    @adminpage path /manage /manage/
+    handle @adminpage {
+        reverse_proxy app:8180
     }
     handle /assets/* {
         root * /srv

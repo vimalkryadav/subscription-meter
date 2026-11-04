@@ -5,7 +5,8 @@ from urllib.parse import urlsplit
 
 def authorize(request, root, bootstrap_key):
     path = root / 'secrets/admin-session'
-    if (urlsplit(request.full_url).path.startswith('/admin/')
+    route = urlsplit(request.full_url).path
+    if ((route.startswith('/admin/') or route in ('/manage', '/manage/'))
             and request.get_header('Authorization') == 'Bearer ' + bootstrap_key and path.is_file()):
         token = path.read_text().strip()
         if not token or any(c.isspace() for c in token):

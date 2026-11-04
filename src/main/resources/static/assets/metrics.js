@@ -1,4 +1,4 @@
-let metricHours=6, metricPercentile='p95', metricReport=null, metricsVersion=0;
+let metricHours=24, metricPercentile='p95', metricReport=null, metricsVersion=0;
 const formatCount=value=>new Intl.NumberFormat().format(Number(value||0));
 
 function showPage() {
@@ -19,6 +19,9 @@ function populateTable(id,rows,columns) {
 function renderMetrics() {
   if(!metricReport)return;
   const r=metricReport,s=r.summary;
+  $('metricsEmpty').hidden=Number(s.requests)!==0;
+  $('metricsEmptyText').textContent='No gateway requests in the last '+(metricHours===168?'7 days':metricHours+' hours')+'. Usage appears after requests are sent through the gateway.';
+  $('showWeek').hidden=metricHours===168;
   $('totalRequests').textContent=formatCount(s.requests);
   $('requestSummary').textContent=formatCount(s.completed)+' complete · '+formatCount(s.pending)+' pending';
   $('totalTokens').textContent=formatCount(s.tokens);
@@ -52,6 +55,7 @@ function renderMetrics() {
 async function refreshMetrics() {
   const version=++metricsVersion;
   $('metricsData').setAttribute('aria-busy','true');$('metricsData').hidden=true;
+  $('metricsEmpty').hidden=true;
   $('metricsError').hidden=true;$('metricsUpdated').textContent='Loading metrics…';
   try{
     const report=await api('/admin/metrics?hours='+metricHours);
@@ -62,6 +66,7 @@ async function refreshMetrics() {
   finally{if(version===metricsVersion)$('metricsData').setAttribute('aria-busy','false');}
 }
 $('refreshMetrics').onclick=refreshMetrics;
+$('showWeek').onclick=()=>$('metricWindows').querySelector('[data-hours="168"]').click();
 for(const button of $('metricWindows').querySelectorAll('button'))button.onclick=()=>{
   metricHours=Number(button.dataset.hours);
   for(const item of $('metricWindows').querySelectorAll('button'))item.setAttribute('aria-pressed',String(item===button));

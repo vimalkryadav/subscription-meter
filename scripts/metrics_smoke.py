@@ -12,12 +12,18 @@ base = parser.parse_args().url.rstrip("/")
 root = Path(__file__).resolve().parents[1]
 admin = (root / "secrets/admin-token").read_text().strip()
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+opener = urllib.request.build_opener(NoRedirect())
+
 
 def read(path, authenticated=True):
     headers = {"Authorization": "Bearer " + admin} if authenticated else {}
     request = authorize(urllib.request.Request(base + path, headers=headers), root, admin)
     try:
-        response = urllib.request.urlopen(request, timeout=30)
+        response = opener.open(request, timeout=30)
     except urllib.error.HTTPError as error:
         response = error
     with response:
@@ -33,10 +39,14 @@ for path, marker, mime in (
     ("/assets/dropdown.js", b"data-dropdown", "javascript"),
     ("/assets/control-usage.svg", b"control-usage", "image/svg+xml"),
 ):
-    code, headers, data = read(path, False)
+    code, headers, data = read(path, path == "/manage")
     assert code == 200 and marker in data and mime in headers.get("Content-Type", ""), path
 
 assert read("/admin/metrics", False)[0] == 401
+for path in ("/manage", "/manage/"):
+    code, headers, data = read(path, False)
+    assert code == 303 and headers.get("Location") == "/" and b"metricsData" not in data
+assert read("/manage.html", False)[0] == 404
 assert read("/admin/metrics?hours=10000")[0] == 400
 assert read("/admin/metrics?mode=invalid")[0] == 400
 assert read("/admin/metrics?mode=mock")[0] == 400

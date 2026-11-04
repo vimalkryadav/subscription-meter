@@ -80,6 +80,10 @@ console is at `/manage`; no port forward is needed for normal use. The optional 
 at http://localhost:8180 and Prometheus at http://localhost:9190. Only loopback
 ports are published on the workspace, so external access goes through Cloudflare.
 Sign in with your administrator account at the root URL; it opens `/manage`.
+The `/manage` document is served by the application only after validating an active
+admin session. Signed-out or expired sessions redirect to `/`; member accounts get
+403. The document is outside the public static directory, and `/manage.html` is not
+served. The dashboard also redirects to login if its session expires while open.
 The deployed owner is `vimalkryadav`. The old admin bearer key is disabled whenever
 an admin account exists. Account sessions use HttpOnly cookies, not localStorage.
 
@@ -304,7 +308,7 @@ HTTP, and connection-pool metrics are available through authenticated
 
 ## Full-content request inspector
 
-The dark-only admin dashboard opens on Metrics, with time-window controls,
+The dark-only admin dashboard opens on Metrics with a 24-hour default window, time-window controls,
 traffic charts, p50/p95/p99 timings by model, top members/models, errors, and capture
 coverage. A custom SVG icon identifies control-usage in both portals and browser tabs.
 Activity-window dropdowns use app-styled menus with arrow-key, Home/End, Escape,
