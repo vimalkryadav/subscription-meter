@@ -82,3 +82,24 @@ After the Kafka acceptance gates and worker readiness pass, record a reviewed au
 Normal deployment validates that the existing broker/worker containers run, the worker matches this exact image digest, and both worker and new gateway declare OCI audit contract1. New application colors receive the same topic/group/partition settings. The gateway's readiness additionally checks live audit safety. The worker image stays fixed across gateway releases. Upgrade a worker separately after checking event compatibility, applying migrations and verifying offsets/replay; update the manifest only to match the resulting running worker. Never change partition count while producers or retained replay data depend on the old mapping. Switching transport is an explicit operational change, not a side effect of a normal app release.
 
 GitHub runs Java, Python deployment/quota tests and Node request-explorer tests before publishing. Coder SSH uses `--wait=no` and does not autostart the workspace. Before the first release, verify the production environment secret, GHCR pull access, clean dedicated checkout, private file links, exact image revision/contract labels and the Coder sudo policy permitting the explicitly preserved nonsecret variables. No pipeline or bootstrap command has been run against the live deployment as part of local preparation.
+
+## Local immutable image fallback during a GitHub outage
+
+Bootstrap and local blue-green commands also accept a full Docker image ID, `sha256:` followed by64 lowercase hexadecimal characters. They inspect that existing image on the deployment host and never attempt to pull it. Mutable tags and shortened IDs are rejected. Revision-label verification remains mandatory, and local fallback images must also declare audit contract1. A local worker cohort can use the same form; validation compares the running container's actual image ID and checks its contract label. Keep these images available for rollback; do not prune them.
+
+Build only from the reviewed, clean checkout of the exact trusted main commit on the deployment host, after its required checks pass. For example:
+
+```sh
+release_sha="$(git rev-parse HEAD)"
+test "$release_sha" = "$(git rev-parse origin/main)"
+git diff --quiet
+git diff --cached --quiet
+mvn --batch-mode --no-transfer-progress verify
+docker build --label "org.opencontainers.image.revision=$release_sha" \
+  --label dev.control-usage.audit-contract=1 \
+  --iidfile /tmp/control-usage-release-image.id .
+```
+
+Use the full ID from that file with the existing `--image` option and the exact commit with `--sha`. The existing bootstrap pause approval, backups, resource checks, migration checks, readiness and drain requirements still apply. This is a host-local fallback, not a registry publication; the GitHub receiver continues to accept only canonical GHCR digests. Normal GitHub pushes to main build and publish an immutable release, while deployment remains restricted to an explicit manual workflow invocation.
+
+For the dedicated deployment checkout, link the private `.env` file and each required secret file individually from the existing private runtime location. Do not replace the whole `secrets/` directory with a symlink: its tracked `.gitkeep` would make the trusted checkout dirty. Preserve the existing credential values and permissions; create only the new deployment token when needed. Keep all private file links ignored by Git, and verify the tracked tree is clean without printing secret contents.

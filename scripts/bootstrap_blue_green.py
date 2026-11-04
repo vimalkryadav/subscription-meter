@@ -66,7 +66,7 @@ def wait_legacy_quiet(env,maximum):
 def bootstrap(args):
     if not args.allow_admission_pause:
         raise RuntimeError("First handoff pauses new requests while existing streams finish plus a quiet60-second window. Explicit --allow-admission-pause required.")
-    if not re.fullmatch(r"[0-9a-f]{40}",args.sha) or not re.fullmatch(r"ghcr\.io/vimalkryadav/control-usage@sha256:[0-9a-f]{64}",args.image):
+    if not re.fullmatch(r"[0-9a-f]{40}",args.sha) or not deploy.is_immutable_image(args.image):
         raise ValueError("Full SHA and immutable control-usage image digest required")
     if not args.caddy_sse_verified:
         raise RuntimeError("Pinned edge reload/SSE fixture must pass before --caddy-sse-verified")
@@ -81,10 +81,7 @@ def bootstrap(args):
         release={"sha":args.sha,"image":args.image}
         manifest={"phase":"preparing","active":"legacy","slots":{"blue":release},"audit":{"transport":"jdbc"}}
         env=deploy.release_env(manifest)
-        deploy.run(["docker","pull",args.image],capture_output=True)
-        inspected=json.loads(deploy.run(["docker","image","inspect",args.image],capture_output=True).stdout)[0]
-        if inspected.get("Config",{}).get("Labels",{}).get("org.opencontainers.image.revision")!=args.sha:
-            raise RuntimeError("Image revision mismatch")
+        deploy.prepare_image(args.image,args.sha)
         deploy.run(["python3","scripts/migrate.py","--apply"])
         deploy.install_assets(args.image,args.sha)
         deploy.compose(["up","-d","--no-deps","app-blue"],env)

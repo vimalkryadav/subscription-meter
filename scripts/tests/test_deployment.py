@@ -3,6 +3,10 @@ from pathlib import Path
 import tempfile
 import sys
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
+import json
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"scripts"))
@@ -16,6 +20,55 @@ def load(name):
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_immutable_image_types_reject_tags_and_other_registries(self):
+        deploy=load("blue_green")
+        self.assertTrue(deploy.is_immutable_image("sha256:"+"a"*64))
+        self.assertTrue(deploy.is_immutable_image("ghcr.io/vimalkryadav/control-usage@sha256:"+"b"*64))
+        for image in (None,"latest","control-usage:latest","ghcr.io/vimalkryadav/control-usage:main",
+                      "sha256:"+"a"*12,"sha256:"+"A"*64,"other.example/control-usage@sha256:"+"a"*64):
+            with self.subTest(image=image):
+                self.assertFalse(deploy.is_immutable_image(image))
+                with patch.object(deploy,"run") as run:
+                    with self.assertRaises(ValueError):deploy.prepare_image(image,"b"*40)
+                    run.assert_not_called()
+
+    def test_local_image_preparation_inspects_exact_id_without_pulling(self):
+        deploy=load("blue_green");image="sha256:"+"a"*64;sha="b"*40
+        inspected={"Id":image,"Config":{"Labels":{"org.opencontainers.image.revision":sha,"dev.control-usage.audit-contract":"1"}}}
+        with patch.object(deploy,"run",return_value=SimpleNamespace(stdout=json.dumps([inspected]))) as run:
+            self.assertEqual(deploy.prepare_image(image,sha),inspected)
+            run.assert_called_once_with(["docker","image","inspect",image],capture_output=True)
+        with patch.object(deploy,"run",side_effect=subprocess.CalledProcessError(1,["docker","image","inspect",image])) as run:
+            with self.assertRaises(subprocess.CalledProcessError):deploy.prepare_image(image,sha)
+            self.assertEqual(run.call_count,1)
+        for changed in ({"Id":"sha256:"+"c"*64},{"Config":{"Labels":{"org.opencontainers.image.revision":"c"*40,"dev.control-usage.audit-contract":"1"}}},
+                        {"Config":{"Labels":{"org.opencontainers.image.revision":sha}}}):
+            with self.subTest(changed=changed),patch.object(deploy,"run",return_value=SimpleNamespace(stdout=json.dumps([{**inspected,**changed}]))):
+                with self.assertRaises(RuntimeError):deploy.prepare_image(image,sha)
+
+    def test_registry_digest_preparation_still_pulls_and_checks_revision(self):
+        deploy=load("blue_green");image="ghcr.io/vimalkryadav/control-usage@sha256:"+"a"*64;sha="b"*40
+        inspected={"Config":{"Labels":{"org.opencontainers.image.revision":sha,"dev.control-usage.audit-contract":"1"}}}
+        with patch.object(deploy,"run",side_effect=[SimpleNamespace(stdout=""),SimpleNamespace(stdout=json.dumps([inspected]))]) as run:
+            deploy.prepare_image(image,sha,True)
+            self.assertEqual(run.call_args_list[0].args[0],["docker","pull",image])
+            self.assertEqual(run.call_args_list[1].args[0],["docker","image","inspect",image])
+
+    def test_local_worker_cohort_matches_running_image_id_and_contract(self):
+        deploy=load("blue_green");image="sha256:"+"a"*64
+        manifest={"audit":{"transport":"kafka","workerImage":image,"contractVersion":1}}
+        env=deploy.release_env(manifest)
+        self.assertEqual(env["AUDIT_WORKER_IMAGE"],image)
+        def inspect(args,**kwargs):
+            if "{{.State.Running}}" in args:return SimpleNamespace(stdout="true")
+            if "{{.Image}}" in args:return SimpleNamespace(stdout=image)
+            if args[:3]==["docker","image","inspect"]:return SimpleNamespace(stdout="1")
+            raise AssertionError("Unexpected Docker operation")
+        with patch.object(deploy,"compose",side_effect=[SimpleNamespace(stdout="broker"),SimpleNamespace(stdout="worker")]),patch.object(deploy,"run",side_effect=inspect):
+            deploy.verify_shared_audit(manifest,env)
+        with self.assertRaises(ValueError):
+            deploy.release_env({"slots":{"blue":{"image":"control-usage:latest","sha":"b"*40}}})
+
     def test_audit_cohort_defaults_jdbc_and_pins_kafka_worker(self):
         deploy=load("blue_green")
         self.assertEqual(deploy.release_env({})["METER_AUDIT_TRANSPORT"],"jdbc")
