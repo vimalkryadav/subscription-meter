@@ -31,3 +31,23 @@ test('a broken stream cancels the reader and cannot produce a complete result', 
   await assert.rejects(readProbe(new Response(body, { headers: { 'content-type': 'text/event-stream' } }), 0, () => {}), /unordered/);
   assert.equal(cancelled, true);
 });
+
+test('deployment profile requires all 71 events over the longer interval and reports the release', async () => {
+  const chunks = Array.from({ length: 71 }, (_, i) => `data: ${JSON.stringify({ sequence: i, total: 71, serverElapsedMs: i * 500, complete: i === 70 })}\n\n`);
+  const res = response(chunks); res.headers.set('x-control-usage-release', 'a'.repeat(40));
+  let now = 100;
+  const result = await readProbe(res, 0, () => {}, () => { const at = now; now += 500; return at; }, 'deployment');
+  assert.equal(result.events, 71); assert.equal(result.serverSpanMs, 35000);
+  assert.equal(result.delivery, 'incremental'); assert.equal(result.release, 'a'.repeat(40));
+  await assert.rejects(readProbe(response(chunks), 0, () => {}, () => 100), /unordered/);
+  await assert.rejects(readProbe(response(Array.from({length:16},(_,i)=>event(i))), 0, () => {}, () => 100, 'deployment'), /unordered/);
+  await assert.rejects(readProbe(response(chunks.slice(0,-1)), 0, () => {}, () => 100, 'deployment'), /before all/);
+  const tooFast=chunks.map(c=>c.replace(/"serverElapsedMs":\d+/, '"serverElapsedMs":0'));
+  await assert.rejects(readProbe(response(tooFast), 0, () => {}, () => 100, 'deployment'), /expected time interval/);
+});
+
+test('malformed completion flags are rejected and an arbitrary release header is not shown', async () => {
+  await assert.rejects(readProbe(response([event(0).replace('"complete":false','"complete":"false"')]), 0, () => {}), /unordered/);
+  const res=response(Array.from({length:16},(_,i)=>event(i)));res.headers.set('x-control-usage-release','unexpected content');
+  assert.equal((await readProbe(res, 0, () => {}, () => 3500)).release, null);
+});

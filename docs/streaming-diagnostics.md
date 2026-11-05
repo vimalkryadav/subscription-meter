@@ -1,11 +1,18 @@
 # Streaming diagnostics
 
-The Operations page has an explicit **Test browser streaming** action. It sends
-one authenticated, CSRF-protected POST to `/admin/operations/stream-probe` and
-expects 16 small, ordered events spaced 200 ms apart. It measures first event,
+The Operations page has explicit **Test browser streaming** and **Test 35-second
+stream** actions. Both send an authenticated, CSRF-protected POST to
+`/admin/operations/stream-probe`. The default/`profile=quick` response has 16 small,
+ordered events spaced 200 ms apart; `profile=deployment` has 71 events spaced
+500 ms apart. No arbitrary duration or event count is accepted. It measures first event,
 completion and delivery span from the browser. Events delivered together are
 reported as buffered; missing or malformed events and connection errors fail the
-test. The browser cancels after 15 seconds or when the operator leaves the page.
+test. The browser cancels after 15 seconds for the quick profile or 45 seconds for
+the deployment profile, or when the operator leaves the page. Both profiles
+share a 20-stream limit per application instance. The long probe keeps an existing
+deployment drain reservation until completion/disconnect, just like the quick
+probe. Neither button initiates a deployment. `X-Control-Usage-Release` identifies
+the serving app release, allowing a cutover test to distinguish old and new streams.
 
 The probe never calls Anthropic/OpenAI, consumes a member key, writes request
 capture, or creates usage/accounting records. It is a fixed diagnostic protocol,
