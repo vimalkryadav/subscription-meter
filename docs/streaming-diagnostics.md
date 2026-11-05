@@ -100,3 +100,38 @@ it should not be conflated with the existing HTTP loopback origin. [Run paramete
 Caddy already flushes `text/event-stream` immediately, and our gateway route also
 sets `flush_interval -1`. Adding more buffering settings is not supported by this
 evidence. [Caddy reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+
+## Live cutover acceptance without provider requests
+
+The repeatable browser harness is `scripts/tests/live_cutover_browser.js`. Install
+it using Playwright's page executor on an authenticated administrator `/manage`
+page, then call `window.controlUsageCutover.start(beforeSha, afterSha)` through
+`page.evaluate`. Both values must be distinct, full release SHAs. Start it just
+before an already authorized deployment begins; this harness never deploys or
+rolls back anything. Both releases must support `profile=deployment`.
+
+The harness opens ten 35-second streams on the old release, polls the public
+index every 500 ms for at most 25 seconds, and opens ten more on the new release
+once the public assets identify it. It requires all old streams to have received
+their first event and still be open at that observation. Each stream must return
+all 71 ordered events, valid completion flags, the expected release header and
+at most 16 KiB. Individual requests time out after 45 seconds; the entire run is
+bounded to 85 seconds. A missed cutover window fails the experiment rather than
+claiming continuity. Do not navigate or reload the browser tab while it is running.
+
+Read `window.controlUsageCutover.snapshot()` through `page.evaluate` until its
+state is no longer `running`. Save that JSON in an ignored local artifact file,
+then verify it independently:
+
+```sh
+python3 scripts/tests/verify_live_cutover.py artifacts/live-cutover-report.json
+```
+
+The verifier requires ten old streams that span the observed cutover and ten new
+streams that begin after it, with all twenty overlapping. It rejects truncated,
+buffered, misrouted, failed, duplicated or nonoverlapping results. The receipt
+contains only release identifiers, status, counts and timings. Session and CSRF
+values stay in the browser closure; no credentials or captured user content are
+exported. This validates diagnostic traffic through the live browser/tunnel/edge
+and application drain, not provider generation, audit persistence, every possible
+network failure, or sustained uptime.
