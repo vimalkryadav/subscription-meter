@@ -57,13 +57,45 @@ class StreamProbeControllerTest {
         for(int i=0;i<21;i++)assertThatThrownBy(()->controller.probe(request(),new MockHttpServletResponse())).isInstanceOfSatisfying(ResponseStatusException.class,e->assertThat(e.getStatusCode().value()).isEqualTo(503));
         state.resume();controller.probe(request(),new MockHttpServletResponse());assertThat(state.active()).isZero();
     }
+    @Test void deploymentProfileFinishesDuringDrainAndIdentifiesServingRelease() throws Exception {
+        var state=new DeploymentState();var clock=new AtomicLong();String release="a".repeat(40);
+        var controller=new StreamProbeController(state,millis->{
+            assertThat(millis).isEqualTo(500);assertThat(state.active()).isEqualTo(1);
+            state.drain();clock.addAndGet(millis*1_000_000);
+            assertThatThrownBy(state::enter).isInstanceOf(ResponseStatusException.class);
+        },clock::get,release);
+        var request=request();request.setParameter("profile","deployment");
+        var response=spy(new MockHttpServletResponse());controller.probe(request,response);
+        String[] events=response.getContentAsString().strip().split("\n\n");
+        assertThat(events).hasSize(71);assertThat(response.getContentAsByteArray().length).isLessThan(16384);
+        for(int i=0;i<71;i++) {
+            var event=JsonMapper.builder().build().readTree(events[i].substring(6));
+            assertThat(event.path("sequence").asInt()).isEqualTo(i);
+            assertThat(event.path("total").asInt()).isEqualTo(71);
+            assertThat(event.path("serverElapsedMs").asLong()).isEqualTo(i*500L);
+            assertThat(event.path("complete").asBoolean()).isEqualTo(i==70);
+        }
+        verify(response,times(71)).flushBuffer();assertThat(state.active()).isZero();
+        assertThat(response.getHeader("X-Control-Usage-Release")).isEqualTo(release);
+    }
+    @Test void arbitraryProfilesCannotChangeBoundsOrReserveCapacity() {
+        var state=new DeploymentState();var controller=new StreamProbeController(state,millis->{},System::nanoTime);
+        for(String profile:List.of("", "120", "DEPLOYMENT", "deployment/", "unlimited")) {
+            var request=request();request.setParameter("profile",profile);var response=mock(HttpServletResponse.class);
+            assertThatThrownBy(()->controller.probe(request,response)).isInstanceOfSatisfying(ResponseStatusException.class,e->assertThat(e.getStatusCode().value()).isEqualTo(400));
+            verifyNoInteractions(response);assertThat(state.active()).isZero();
+        }
+    }
     @Test void twentyConcurrentProbesRejectTwentyFirstBeforeWritingHeaders() throws Exception {
         var state=new DeploymentState();var entered=new CountDownLatch(20);var release=new CountDownLatch(1);
         var controller=new StreamProbeController(state,millis->{entered.countDown();release.await();},System::nanoTime);
         try(var executor=Executors.newVirtualThreadPerTaskExecutor()) {
             var pending=new ArrayList<Future<?>>();
             try {
-                for(int i=0;i<20;i++)pending.add(executor.submit(()->{controller.probe(request(),new MockHttpServletResponse());return null;}));
+                for(int i=0;i<20;i++) {
+                    var request=request();request.setParameter("profile",i%2==0?"quick":"deployment");
+                    pending.add(executor.submit(()->{controller.probe(request,new MockHttpServletResponse());return null;}));
+                }
                 assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();assertThat(state.active()).isEqualTo(20);
                 var response=mock(HttpServletResponse.class);
                 assertThatThrownBy(()->controller.probe(request(),response)).isInstanceOfSatisfying(ResponseStatusException.class,e->assertThat(e.getStatusCode().value()).isEqualTo(429));
