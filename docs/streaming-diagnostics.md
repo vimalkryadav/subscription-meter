@@ -135,3 +135,21 @@ values stay in the browser closure; no credentials or captured user content are
 exported. This validates diagnostic traffic through the live browser/tunnel/edge
 and application drain, not provider generation, audit persistence, every possible
 network failure, or sustained uptime.
+
+## Live rollback observation and deployment correction
+
+The first live rollback rehearsal on 2026-11-05 delivered all 1,420 events across
+20 incremental streams. Ten streams on release `d0eb6afb7cfe` spanned the observed
+switch to `906036e9f5d6`, where ten more streams started. The independent receipt
+verifier passed, with first-event p95 of 203 ms. Protocol metadata included HTTP/2
+and unavailable entries; it does not prove every stream used HTTP/2.
+
+The deployment command nevertheless failed: its one-shot edge check observed the
+previous release immediately after SIGUSR1 and restored the prior route. This
+was not a completed successful rollback. The manifest was conservatively left
+in `switching`. On 2026-11-07, the serving release and saved prior configuration
+were verified, the candidate was drained, and the manifest was reconciled to
+stable on `d0eb6afb7cfe`. The deployer now waits for routing convergence and
+verifies restoration before it cleans up a failed candidate. Fresh acceptance
+of the corrected deployment is required; the earlier stream result alone does
+not establish that the deployment state machine completed.

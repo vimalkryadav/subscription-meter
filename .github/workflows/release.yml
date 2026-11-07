@@ -85,9 +85,14 @@ jobs:
           cache: false
       - name: Download the deployment-matched Coder CLI
         run: |
+          server_version=$(curl --fail --silent --show-error --retry 3 --max-time 30 https://coder.scaler.com/api/v2/buildinfo | jq -er '.version')
+          [[ "$server_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]]
           curl --fail --silent --show-error --location --retry 3 --max-time 120 https://coder.scaler.com/bin/coder-linux-amd64 -o "$RUNNER_TEMP/coder"
           chmod 700 "$RUNNER_TEMP/coder"
-          "$RUNNER_TEMP/coder" version | grep -F 'Coder v2.38.4+d16b1ca'
+          cli_version=$("$RUNNER_TEMP/coder" version | awk 'NR == 1 { value=$2 } END { print value }')
+          [[ "$cli_version" == "$server_version" ]]
+          current_version=$(curl --fail --silent --show-error --retry 3 --max-time 30 https://coder.scaler.com/api/v2/buildinfo | jq -er '.version')
+          [[ "$current_version" == "$server_version" ]]
       - name: Deploy immutable release to the dedicated checkout
         env:
           RELEASE_IMAGE: ${{ needs.build.outputs.image }}
