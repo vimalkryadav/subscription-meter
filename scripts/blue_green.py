@@ -190,11 +190,40 @@ def wait_drained(color, maximum):
     raise RuntimeError("Drain deadline exceeded; old container retained, never force-stopped")
 
 
-def verify_edge(sha):
-    # Release marker is generated from the immutable index artifact during installation.
-    with urllib.request.urlopen("http://127.0.0.1:8182/", timeout=10) as response:
-        if ("/assets/releases/"+sha+"/").encode() not in response.read():
-            raise RuntimeError("Edge did not load expected release")
+def verify_edge(sha, timeout=10):
+    # SIGUSR1 delivery is not reload completion. Require consecutive fresh observations.
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("Full release SHA required")
+    deadline = time.monotonic() + timeout
+    matches = 0
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            request = urllib.request.Request("http://127.0.0.1:8182/", headers={"Cache-Control": "no-cache", "Connection": "close"})
+            with urllib.request.urlopen(request, timeout=min(2, remaining)) as response:
+                body = response.read(65537)
+                releases = set(re.findall(rb"/assets/releases/([0-9a-f]{40})/", body))
+                correct = response.status == 200 and len(body) <= 65536 and releases == {sha.encode()}
+            matches = matches + 1 if correct else 0
+            if matches >= 2:
+                return
+        except OSError:
+            matches = 0
+        time.sleep(min(.1, max(0, deadline - time.monotonic())))
+    raise RuntimeError("Edge did not converge to expected release before deadline")
+
+
+class EdgeRestoredError(RuntimeError):
+    """Candidate routing failed, but the prior route has been positively verified."""
+
+
+def switch_edge(before, candidate, old_sha, new_sha, env):
+    try:
+        reload_edge(candidate, env)
+        verify_edge(new_sha)
+    except Exception as failure:
+        reload_edge(before, env)
+        verify_edge(old_sha)
+        raise EdgeRestoredError("Candidate routing failed; prior release restored and verified") from failure
 
 
 def preflight_resources():
@@ -314,10 +343,15 @@ def deploy(args):
         manifest["phase"] = "switching"
         write_json(path, manifest)
         try:
-            reload_edge(render_config(before,new,release["sha"]),env)
-            verify_edge(release["sha"])
-        except Exception:
-            reload_edge(before,env)
+            switch_edge(before,render_config(before,new,release["sha"]),manifest["slots"][old]["sha"],release["sha"],env)
+        except EdgeRestoredError:
+            # The candidate could have served streams before restoration. Drain it first.
+            api(new,"/drain")
+            wait_drained(new,args.drain_seconds)
+            compose(["stop","app-"+new],env)
+            manifest.update(phase="stable",active=old)
+            manifest.pop("candidate",None)
+            write_json(path,manifest)
             raise
         manifest.update(phase="draining",active=new,previous={"color":old,"release":manifest["slots"][old]})
         write_json(path,manifest)

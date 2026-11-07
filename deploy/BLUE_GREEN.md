@@ -105,3 +105,23 @@ docker build --label "org.opencontainers.image.revision=$release_sha" \
 Use the full ID from that file with the existing `--image` option and the exact commit with `--sha`. The existing bootstrap pause approval, backups, resource checks, migration checks, readiness and drain requirements still apply. This is a host-local fallback, not a registry publication; the GitHub receiver continues to accept only canonical GHCR digests. Normal GitHub pushes to main build, verify, publish and deploy an immutable release; manual dispatch can also deploy with Deploy enabled.
 
 For the dedicated deployment checkout, link the private `.env` file and each required secret file individually from the existing private runtime location. Do not replace the whole `secrets/` directory with a symlink: its tracked `.gitkeep` would make the trusted checkout dirty. Preserve the existing credential values and permissions; create only the new deployment token when needed. Keep all private file links ignored by Git, and verify the tracked tree is clean without printing secret contents.
+
+## Edge reload convergence and failed-candidate cleanup
+
+Sending SIGUSR1 confirms signal delivery, not that the new routing is already
+observable. `verify_edge` polls the loopback index for up to ten seconds and
+requires two consecutive fresh responses whose release asset identifiers all
+match the intended SHA. Individual HTTP calls and response sizes are bounded.
+Transient old responses no longer trigger an immediate rollback.
+
+If candidate routing fails, the deployer restores the previous configuration and
+verifies its release before draining the candidate. The candidate may already
+have accepted streams, so it is stopped only after its normal drain completes.
+Only then is the manifest marked stable on the previous active color. Failed
+restoration or drain leaves the manifest unfinished and both processes available
+for operator inspection. Never reset a manifest based only on the on-disk config.
+
+The GitHub runner downloads the CLI from the configured Coder deployment and
+checks its version against `/api/v2/buildinfo` both before and after download.
+A server upgrade during download fails verification instead of running an
+unmatched CLI. This replaces the historical fixed server-version string.

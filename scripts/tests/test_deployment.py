@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import ExitStack
 from pathlib import Path
 import tempfile
 import sys
@@ -20,6 +21,72 @@ def load(name):
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_edge_verification_waits_for_two_consecutive_bounded_responses(self):
+        deploy=load("blue_green");sha="a"*40;old=b"/assets/releases/"+b"b"*40+b"/app.js"
+        expected=b"/assets/releases/"+sha.encode()+b"/app.js"
+        class Response:
+            status=200
+            def __init__(self,body):self.body=body
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,limit):self.limit=limit;return self.body[:limit]
+        now=[0.0]
+        def sleep(seconds):now[0]+=seconds
+        for bodies in ([old,expected,old,expected,expected],[OSError(),expected,expected],
+                       [expected+old,expected,expected],[b"x"*65537,expected,expected]):
+            with self.subTest(bodies=len(bodies)):
+                now[0]=0
+                responses=[v if isinstance(v,Exception) else Response(v) for v in bodies]
+                with patch.object(deploy.time,"monotonic",side_effect=lambda:now[0]),patch.object(deploy.time,"sleep",side_effect=sleep),patch.object(deploy.urllib.request,"urlopen",side_effect=responses) as request:
+                    deploy.verify_edge(sha)
+                    self.assertEqual(request.call_count,len(bodies))
+                    self.assertEqual(request.call_args.args[0].get_header("Cache-control"),"no-cache")
+        now[0]=0
+        with patch.object(deploy.time,"monotonic",side_effect=lambda:now[0]),patch.object(deploy.time,"sleep",side_effect=sleep),patch.object(deploy.urllib.request,"urlopen",return_value=Response(old)) as request:
+            with self.assertRaisesRegex(RuntimeError,"deadline"):deploy.verify_edge(sha,timeout=.3)
+            self.assertLessEqual(request.call_count,4)
+        with self.assertRaises(ValueError):deploy.verify_edge("main")
+
+    def test_failed_switch_requires_verified_restoration(self):
+        deploy=load("blue_green");old="a"*40;new="b"*40
+        with patch.object(deploy,"reload_edge") as reload,patch.object(deploy,"verify_edge",side_effect=[RuntimeError("candidate failed"),None]) as verify:
+            with self.assertRaises(deploy.EdgeRestoredError):deploy.switch_edge("before","candidate",old,new,{})
+            self.assertEqual([c.args[0] for c in reload.call_args_list],["candidate","before"])
+            self.assertEqual([c.args[0] for c in verify.call_args_list],[new,old])
+        with patch.object(deploy,"reload_edge"),patch.object(deploy,"verify_edge",side_effect=[RuntimeError("candidate failed"),RuntimeError("restoration unverified")]):
+            with self.assertRaisesRegex(RuntimeError,"restoration unverified") as failure:deploy.switch_edge("before","candidate",old,new,{})
+            self.assertNotIsInstance(failure.exception,deploy.EdgeRestoredError)
+
+    def test_failed_deployment_restores_state_only_after_candidate_drain(self):
+        for failure_kind in ("restored","unverified","drain_failed"):
+            with self.subTest(failure_kind=failure_kind),tempfile.TemporaryDirectory() as folder,ExitStack() as stack:
+                deploy=load("blue_green");state=Path(folder);caddy=state/"Caddyfile";caddy.write_text("before")
+                (state/"bootstrap.json").write_text('{"verified":true}')
+                old={"sha":"a"*40,"image":"sha256:"+"a"*64};new={"sha":"b"*40,"image":"sha256:"+"b"*64}
+                (state/"release.json").write_text(json.dumps({"phase":"stable","active":"blue","slots":{"blue":old,"green":new},"previous":{"color":"green","release":new}}))
+                stack.enter_context(patch.object(deploy,"STATE",state));stack.enter_context(patch.object(deploy,"CADDY",caddy))
+                for name in ("preflight_resources","verify_edge","verify_shared_audit","prepare_image","install_assets","wait_ready"):
+                    stack.enter_context(patch.object(deploy,name))
+                stack.enter_context(patch.object(deploy,"render_config",return_value="candidate"))
+                error=RuntimeError("unverified") if failure_kind=="unverified" else deploy.EdgeRestoredError("restored")
+                stack.enter_context(patch.object(deploy,"switch_edge",side_effect=error))
+                calls=[]
+                stack.enter_context(patch.object(deploy,"api",side_effect=lambda color,action:calls.append(action)))
+                stack.enter_context(patch.object(deploy,"compose",side_effect=lambda args,env:calls.append(args[0])))
+                def drain(*args):
+                    calls.append("wait_drained")
+                    if failure_kind=="drain_failed":raise RuntimeError("drain failed")
+                stack.enter_context(patch.object(deploy,"wait_drained",side_effect=drain))
+                with self.assertRaises(RuntimeError):deploy.deploy(SimpleNamespace(rollback=True,drain_seconds=370))
+                manifest=json.loads((state/"release.json").read_text())
+                self.assertEqual(manifest["active"],"blue")
+                if failure_kind=="restored":
+                    self.assertEqual(manifest["phase"],"stable");self.assertNotIn("candidate",manifest)
+                    self.assertEqual(calls[-3:],["/drain","wait_drained","stop"])
+                else:
+                    self.assertEqual(manifest["phase"],"switching");self.assertEqual(manifest["candidate"],"green")
+                    self.assertNotIn("stop",calls)
+
     def test_release_order_uses_actual_git_graph_and_fails_closed(self):
         deploy = load("blue_green")
         with tempfile.TemporaryDirectory() as folder:
