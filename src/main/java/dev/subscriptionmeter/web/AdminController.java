@@ -2,6 +2,9 @@ package dev.subscriptionmeter.web;
 
 import dev.subscriptionmeter.domain.*;
 import dev.subscriptionmeter.security.MemberService;
+import dev.subscriptionmeter.administration.AdminActionAudit;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.transaction.annotation.Transactional;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.nio.file.*;
@@ -21,22 +24,28 @@ public class AdminController {
     private final String mode, tokenFile;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final dev.subscriptionmeter.audit.AuditStore audit;
+    private final AdminActionAudit actionAudit;
     @Value("${meter.audit.retention-days:30}") private int retentionDays;
     @Value("${meter.audit.timescale-enabled:false}") private boolean timescale;
     public AdminController(MemberService members, AnalyticsReader analytics, @Value("${meter.mode}") String mode,
             @Value("${meter.upstream-token-file}") String tokenFile,org.springframework.jdbc.core.JdbcTemplate jdbc,
-            dev.subscriptionmeter.audit.AuditStore audit) {
-        this.members = members; this.analytics = analytics; this.mode = mode; this.tokenFile = tokenFile;this.jdbc=jdbc;this.audit=audit;
+            dev.subscriptionmeter.audit.AuditStore audit, AdminActionAudit actionAudit) {
+        this.members = members; this.analytics = analytics; this.mode = mode; this.tokenFile = tokenFile;this.jdbc=jdbc;this.audit=audit;this.actionAudit=actionAudit;
     }
     public record NewMember(@NotBlank @Size(max=100) String name, @Min(1) @Max(600) int rpm,
                             @Min(1) @Max(20) int concurrency) {}
     @PostMapping("/members") @ResponseStatus(HttpStatus.CREATED)
-    public MemberService.IssuedKey create(@Valid @RequestBody NewMember body) {
-        return members.create(body.name().strip(), body.rpm(), body.concurrency());
+    @Transactional
+    public MemberService.IssuedKey create(@Valid @RequestBody NewMember body,HttpServletRequest request) {
+        var issued=members.create(body.name().strip(), body.rpm(), body.concurrency());
+        actionAudit.record(request,"member.create",issued.member().id(),Map.of("rpm",body.rpm(),"concurrency",body.concurrency()));
+        return issued;
     }
     @GetMapping("/members") public List<Member> list() { return members.list(); }
-    @DeleteMapping("/members/{id}") public Map<String, String> revoke(@PathVariable String id) {
-        members.revoke(id); return Map.of("revoked", id, "note", "New requests blocked; in-flight requests may finish.");
+    @Transactional
+    @DeleteMapping("/members/{id}") public Map<String, String> revoke(@PathVariable String id,HttpServletRequest request) {
+        members.find(id);members.revoke(id);actionAudit.record(request,"member.revoke",id,Map.of());
+        return Map.of("revoked", id, "note", "New requests blocked; in-flight requests may finish.");
     }
     @GetMapping("/analytics") public Map<String, Object> analytics(@RequestParam(defaultValue="7") int days) {
         if (days < 1 || days > 90) throw new ResponseStatusException(HttpStatus.BAD_REQUEST);

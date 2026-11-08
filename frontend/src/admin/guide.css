@@ -1,0 +1,16 @@
+.cu-admin .cu-guide-layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:20px;align-items:start}
+.cu-admin .cu-guide-toc{position:sticky;top:85px;display:flex;flex-direction:column;gap:4px;max-height:calc(100vh - 110px);overflow:auto;padding:4px}
+.cu-admin .cu-guide-toc button{text-align:left;white-space:normal;font-size:12px;line-height:1.5;border-color:transparent;background:transparent;color:var(--cu-muted)}
+.cu-admin .cu-guide-toc button[aria-current=page]{background:#20364e;color:#d4e5ff;border-color:#426084}
+.cu-admin .cu-guide-prose{min-width:0;line-height:1.75;font-size:14px;overflow-wrap:anywhere}
+.cu-admin .cu-guide-prose h2{font-size:22px;line-height:1.4;margin:10px 0 20px}
+.cu-admin .cu-guide-prose h3{font-size:17px;margin:24px 0 12px}
+.cu-admin .cu-guide-prose p{margin:14px 0}
+.cu-admin .cu-guide-prose li{margin:8px 0;padding-left:4px}
+.cu-admin .cu-guide-prose ul,.cu-admin .cu-guide-prose ol{padding-left:24px}
+.cu-admin .cu-guide-prose pre{max-height:none;max-width:100%;overflow:auto;white-space:pre;font-size:12px;padding:18px;background:#0b141e;border:1px solid var(--cu-border);border-radius:8px}
+.cu-admin .cu-guide-prose :not(pre)>code{background:#213044;padding:2px 5px;border-radius:4px;font-size:.9em}
+.cu-admin .cu-guide-prose table{min-width:550px}
+.cu-admin .cu-guide-prose th{white-space:normal}
+.cu-admin .cu-guide-next{margin-top:28px;padding-top:16px;border-top:1px solid var(--cu-border)}
+@media(max-width:1000px){.cu-admin .cu-guide-layout{grid-template-columns:1fr}.cu-admin .cu-guide-toc{position:static;max-height:220px;border:1px solid var(--cu-border);border-radius:8px}.cu-admin .cu-guide-prose{font-size:13px}}
