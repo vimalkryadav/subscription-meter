@@ -32,6 +32,7 @@ public class RequestSearchController {
             @RequestParam(defaultValue="") String provider,@RequestParam(defaultValue="") String upstreamAccount,
             @RequestParam(defaultValue="") String clientFamily,@RequestParam(defaultValue="") String keyPrefix,
             @RequestParam(defaultValue="") String category,
+            @RequestParam(defaultValue="") String modelFamily,
             @RequestParam(defaultValue="50") int limit,@RequestParam(defaultValue="") String cursor,
             HttpServletResponse response) {
         response.setHeader("Cache-Control","no-store");
@@ -56,7 +57,8 @@ public class RequestSearchController {
                 ||minDurationMs!=null&&maxDurationMs!=null&&minDurationMs>maxDurationMs)throw bad("Invalid duration");
         if(!Set.of("","pending","available","incomplete","truncated","error","expired","unavailable").contains(captureState))throw bad("Invalid capture state");
         if(!Set.of("","anthropic","openai").contains(provider))throw bad("Invalid provider");
-        Filter filter=new Filter(from,to,memberId,model,requestId,upstreamRequestId,state,status,captureState,minDurationMs,maxDurationMs,usageSeen,provider,upstreamAccount,clientFamily,keyPrefix,category);
+        if(!Set.of("","fable").contains(modelFamily))throw bad("Invalid model family");
+        Filter filter=new Filter(from,to,memberId,model,requestId,upstreamRequestId,state,status,captureState,minDurationMs,maxDurationMs,usageSeen,provider,upstreamAccount,clientFamily,keyPrefix,category,modelFamily);
         String fingerprint=fingerprint(filter);
         if(parts!=null&&(!parts[5].equals(fingerprint)||position.startedAt().isBefore(from)
                 ||!position.startedAt().isBefore(to)||position.id().length()>36))throw bad("Cursor does not match filters");

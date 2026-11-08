@@ -80,7 +80,7 @@ public class AccountingService {
             }
             var e=old.isEmpty()?estimate(r):estimateUsingVersion(r,(String)old.getFirst().get("price_version"));
             if(!bodies.isEmpty())new QuotaSnapshots(jdbc).recordHeaders((String)r.get("provider"),(String)r.get("upstream_account"),
-                (String)capture.get("response_headers"),instant(capture.get("started_at")).plusMillis(number(capture.get("upstream_headers_ms"))));
+                (String)capture.get("response_headers"),instant(capture.get("started_at")).plusMillis(number(capture.get("upstream_headers_ms"))),(String)r.get("model"));
             var c=classifier.classify((String)capture.get("body"));
             if(bodies.isEmpty()&&!old.isEmpty()){
                 var prior=old.getFirst();c=new WorkClassifier.Classification((String)prior.get("category"),(String)prior.get("method"),(String)prior.get("confidence"),(String)prior.get("classifier_version"));

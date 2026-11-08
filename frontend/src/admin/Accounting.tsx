@@ -4,6 +4,7 @@ import { count, date, Heading, money, Notice, options, Panel, pretty, providers,
 import type { Row } from './ui';
 import { openRequestScope } from './search';
 import QuotaUsage from './QuotaUsage';
+import { quotaLabel } from './quota';
 
 interface Report { from: string; to: string; generatedAt: string; summary: Row; members: Row[]; categories: Row[]; quota: { state: string; snapshots: Row[] }; notes: string[] }
 interface Allocation { allocatedAmount: number; unallocatedAmount: number; currency: string; usageCoverage: string; note: string; members: Row[] }
@@ -28,7 +29,7 @@ export default function Accounting() {
             const staleAge = ageSeconds !== null && asOf - observed > 300000;
             const freshness = resetElapsed ? 'Reset time passed; current usage unknown' : staleAge ? 'Observation older than five minutes' : row.state === 'available' ? 'Recent observation' : 'Freshness unavailable';
             const age = ageSeconds === null ? 'Age unavailable' : ageSeconds < 60 ? ageSeconds + ' seconds old' : ageSeconds < 3600 ? Math.floor(ageSeconds / 60) + ' minutes old' : Math.floor(ageSeconds / 3600) + ' h ' + Math.floor(ageSeconds % 3600 / 60) + ' min old';
-            return <tr key={text(row.id)}><td>{text(row.provider)} / {text(row.upstream_account)}</td><td>{row.bucket === 'five_hour' ? 'Five-hour window' : row.bucket === 'seven_day' ? 'Seven-day window' : text(row.bucket)}</td><td>{row.used_percentage == null ? 'Unknown' : count(row.used_percentage) + '%'}</td><td>{date(row.observed_at)}<br /><span className="cu-muted">{age}</span></td><td>{date(row.resets_at)}</td><td>{freshness}</td><td>{row.source === 'upstream_headers_v1' ? 'Upstream response headers' : row.source === 'coder_statusline' ? 'Trusted Coder status line' : text(row.source)}</td></tr>;
+            return <tr key={text(row.id)}><td>{text(row.provider)} / {text(row.upstream_account)}</td><td>{quotaLabel(text(row.bucket))}</td><td>{row.used_percentage == null ? 'Unknown' : count(row.used_percentage) + '%'}</td><td>{date(row.observed_at)}<br /><span className="cu-muted">{age}</span></td><td>{date(row.resets_at)}</td><td>{freshness}</td><td>{row.source === 'upstream_headers_v1' ? 'Upstream response headers' : row.source === 'coder_statusline' ? 'Trusted Coder status line' : text(row.source)}</td></tr>;
           })}
         </Table><details><summary>Observation metadata</summary><pre>{pretty(report.quota.snapshots)}</pre></details></> : <Notice>No provider quota observations available. Subscription usage percentages cannot be inferred from tokens alone.</Notice>}<ul>{report.notes?.map((note, index) => <li key={index}>{note}</li>)}</ul></Panel>
     </>}

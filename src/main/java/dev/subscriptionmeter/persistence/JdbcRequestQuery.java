@@ -41,6 +41,7 @@ public class JdbcRequestQuery implements RequestQuery {
         equal(sql,args,"r.id",f.requestId()); equal(sql,args,"r.upstream_request_id",f.upstreamRequestId());
         equal(sql,args,"r.state",f.state()); equal(sql,args,"r.status_code",f.status());
         equal(sql,args,"r.usage_seen",f.usageSeen());
+        if("fable".equals(f.modelFamily()))sql.append(" AND r.provider='anthropic' AND (LOWER(r.model)='fable' OR LOWER(r.model) LIKE 'claude-fable-%')");
         equal(sql,args,"r.provider",f.provider()); equal(sql,args,"r.upstream_account",f.upstreamAccount());
         equal(sql,args,"r.client_family",f.clientFamily()); equal(sql,args,"r.member_key_prefix",f.keyPrefix());
         equal(sql,args,"COALESCE(a.manual_category,a.category,'unknown')",f.category());

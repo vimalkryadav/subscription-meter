@@ -105,7 +105,7 @@ All reporting tools require a valid administrator session except local guide sea
 | `get_status` | None | Credential presence, gateway/capture status; never the credential |
 | `get_operations` | None | Readiness, worker lag, storage and backup checks, with report freshness |
 | `get_metrics` | `hours`: 1, 6, 24 or 168; default 24 | Request, token, error and latency aggregates |
-| `get_quota_usage` | Optional `provider` | Account session/weekly observations and reset-aligned member token shares; allowance attribution stays unknown |
+| `get_quota_usage` | Optional `provider` | Five-hour, weekly all-models and separate Fable weekly observations with independent resets/freshness; Fable-only member shares; allowance attribution stays unknown |
 | `get_accounting` | `days` 1–90, optional `provider`, `memberId` | Historical cohort shares, work categories and API-equivalent estimates |
 | `list_members` | None | Member IDs, names, active state, key prefixes and current limits; no usable tokens |
 | `list_key_requests` | None | Access-request IDs, portal identities, states and reasons |
@@ -122,7 +122,9 @@ Provider values are `anthropic`, `openai`, or empty for all where supported. The
 
 ## Request search and pagination
 
-`search_requests` accepts `from`, `to`, `memberId`, `model`, `requestId`, `upstreamRequestId`, `state`, `status`, `captureState`, `minDurationMs`, `maxDurationMs`, `usageSeen`, `provider`, `upstreamAccount`, `clientFamily`, `keyPrefix`, `category`, `limit` and `cursor`.
+`search_requests` accepts `from`, `to`, `memberId`, `model`, `modelFamily`, `requestId`, `upstreamRequestId`, `state`, `status`, `captureState`, `minDurationMs`, `maxDurationMs`, `usageSeen`, `provider`, `upstreamAccount`, `clientFamily`, `keyPrefix`, `category`, `limit` and `cursor`.
+
+Use `modelFamily: "fable"` for the same Fable-only scope as the quota card; an empty or omitted value includes all families. The filter recognizes Anthropic `fable` and `claude-fable-…` requested model IDs.
 
 Dates use ISO-8601 timestamps with timezone offsets; the interval is start-inclusive and end-exclusive, at most 365 days. Defaults are the last 24 hours and 25 records, with a maximum page size of 100. Duration bounds are nonnegative milliseconds. Capture states are pending, available, incomplete, truncated, error, expired or unavailable. Identifiers and strings are length-bounded; there is no arbitrary SQL or URL argument.
 
@@ -165,7 +167,7 @@ Action tool annotations mark writes as potentially destructive and non-idempoten
 
 ## Example administrative workflows
 
-**Review usage:** “Show the weekly and five-hour account observations, their age/reset time, and members' gateway shares. Keep outside usage unknown and separate API-equivalent value from my subscription bill.” This uses reads and should not trigger an action tool.
+**Review usage:** “Show the weekly all-models, separate weekly Fable, and five-hour account observations, their age/reset time, and members' gateway shares. Keep outside usage unknown and separate API-equivalent value from my subscription bill.” This uses reads and should not trigger an action tool.
 
 **Approve a person:** list key requests, identify the intended username and pending request ID, state proposed RPM/concurrency, then call `decide_key_request` only for the requested decision. Read the list again to verify the state. The member claims their token in the portal; the assistant never needs to retrieve it.
 

@@ -30,7 +30,8 @@ def main():
     if not isinstance(source, dict):
         return
     windows = {}
-    for name in ('five_hour', 'seven_day'):
+    # seven_day_fable is accepted only if explicitly supplied; never rename a generic model bucket.
+    for name in ('five_hour', 'seven_day', 'seven_day_fable'):
         value = source.get(name, {})
         if not isinstance(value, dict):
             continue

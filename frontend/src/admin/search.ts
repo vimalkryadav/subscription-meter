@@ -1,4 +1,4 @@
-export const filterNames = ['memberId', 'model', 'requestId', 'upstreamRequestId', 'state', 'status', 'captureState', 'minDurationMs', 'maxDurationMs', 'usageSeen', 'provider', 'upstreamAccount', 'clientFamily', 'keyPrefix', 'category'] as const;
+export const filterNames = ['memberId', 'model', 'modelFamily', 'requestId', 'upstreamRequestId', 'state', 'status', 'captureState', 'minDurationMs', 'maxDurationMs', 'usageSeen', 'provider', 'upstreamAccount', 'clientFamily', 'keyPrefix', 'category'] as const;
 export type Filters = Record<typeof filterNames[number] | 'days' | 'from' | 'to', string>;
 export function emptyFilters(): Filters { return Object.fromEntries([...filterNames, 'from', 'to'].map(key => [key, '']).concat([['days', '7']])) as Filters; }
 export function presetWindow(filters: Filters, days: string): Filters { return { ...filters, days, from: '', to: '' }; }
