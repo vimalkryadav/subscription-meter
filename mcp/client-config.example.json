@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "control-usage-admin": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/subscription-meter/mcp/dist/index.js"],
+      "env": {
+        "CONTROL_USAGE_URL": "https://YOUR_CURRENT_PLATFORM_HOST",
+        "CONTROL_USAGE_MCP_SESSION_FILE": "/absolute/path/to/subscription-meter/secrets/mcp-session.json",
+        "CONTROL_USAGE_MCP_WRITES": "true",
+        "CONTROL_USAGE_MCP_CONTENT": "false"
+      }
+    }
+  }
+}

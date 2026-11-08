@@ -182,6 +182,31 @@ class PortalFlowTest {
             assertThat(mvc.perform(get("/manage").cookie(new Cookie("meter_session","invalid"))).andReturn().getResponse().getStatus()).isEqualTo(303);
         } finally { jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id()); }
     }
+    @Test void adminApprovalAndRevocationRecordActorWithoutCredentials() throws Exception {
+        Login owner=register(),user=register();String id=request(user);
+        jdbc.update("UPDATE portal_accounts SET role='admin' WHERE id=?",owner.id());
+        try {
+            String path="/admin/key-requests/"+id+"/decision";
+            var denied=mvc.perform(post(path).cookie(owner.cookie()).contentType("application/json")
+                    .content("{\"approve\":true,\"rpm\":60,\"concurrency\":4}")).andReturn();
+            assertThat(denied.getResponse().getStatus()).isEqualTo(403);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_action_log WHERE target_id=?",Integer.class,id)).isZero();
+            var approved=mvc.perform(post(path).cookie(owner.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",owner.csrf())
+                    .header("X-Control-Usage-Client","mcp").contentType("application/json")
+                    .content("{\"approve\":true,\"rpm\":60,\"concurrency\":4}")).andReturn();
+            assertThat(approved.getResponse().getStatus()).isEqualTo(200);
+            var action=jdbc.queryForMap("SELECT actor_id,action,details_json FROM admin_action_log WHERE target_id=?",id);
+            assertThat(action.get("actor_id")).isEqualTo(owner.id());assertThat(action.get("action")).isEqualTo("key_request.approve");
+            assertThat(action.get("details_json").toString()).contains("mcp").doesNotContain(owner.cookie().getValue(),owner.csrf());
+            String memberId=json(write(user,"/token",Map.of())).path("member").path("id").asString();
+            String revoke="/admin/members/"+memberId;
+            var result=mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(revoke).servletPath(revoke)
+                    .cookie(owner.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",owner.csrf())).andReturn();
+            assertThat(result.getResponse().getStatus()).isEqualTo(200);
+            assertThat(members.find(memberId).active()).isFalse();
+            assertThat(jdbc.queryForObject("SELECT actor_id FROM admin_action_log WHERE target_id=? AND action='member.revoke'",String.class,memberId)).isEqualTo(owner.id());
+        } finally { jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id()); }
+    }
     @Test void rejectionCanBeResubmittedAndLimitsAreValidated() throws Exception {
         Login user=register();String id=request(user);
         access.decide(id,false,60,4);

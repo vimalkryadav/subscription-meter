@@ -6,6 +6,17 @@ Anthropic using the server-provisioned subscription credential. Mock runtime mod
 and synthetic production records have been retired. Upstream availability and
 successful generation remain subject to the actual provider response.
 
+## Administrator guide and MCP
+
+The dashboard's **Admin guide & MCP** page provides searchable sections and Markdown downloads.
+The same source is maintained in the [detailed administrator guide](docs/admin-guide.md)
+and [MCP setup/tool reference](docs/mcp-guide.md).
+
+The local TypeScript MCP bridge in `mcp/` provides reporting tools and optional administrative
+actions through the existing HTTPS admin APIs. It uses a private, origin-bound, expiring admin
+session; sensitive capture access is separately enabled. It issues no member/provider credentials,
+performs no inference, and adds no public MCP endpoint. See the MCP guide before enabling actions.
+
 ## Architecture
 
 ```mermaid

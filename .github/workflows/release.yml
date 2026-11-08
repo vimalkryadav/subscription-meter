@@ -33,6 +33,7 @@ jobs:
         with:
           node-version: '22'
       - run: mvn --batch-mode --no-transfer-progress verify
+      - run: npm ci --prefix mcp --ignore-scripts && npm test --prefix mcp
       - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - uses: actions/setup-go@v5
         with:

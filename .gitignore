@@ -21,3 +21,6 @@ src/main/resources/static/releases/
 src/main/resources/static/assets/releases/
 
 frontend/node_modules/
+
+mcp/node_modules/
+mcp/dist/

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { ApiError, getSession } from '../shared/api';
 import type { Session } from '../shared/api';
 import Metrics from './Metrics';
@@ -9,8 +9,9 @@ import { Accounts, Approvals, Members } from './Management';
 import { Heading, Notice, Panel, pretty, text, useMutation, useResource } from './ui';
 import type { Row } from './ui';
 import './admin.css';
+const AdminGuide = lazy(() => import('./AdminGuide'));
 
-const pages = [{ id: 'metrics', label: 'Metrics', icon: '◴' }, { id: 'activity', label: 'Request explorer', icon: '⌕' }, { id: 'accounting', label: 'Usage & value', icon: '◈' }, { id: 'members', label: 'Members & keys', icon: '⚿' }, { id: 'approvals', label: 'Access requests', icon: '↳' }, { id: 'accounts', label: 'Accounts & sessions', icon: '◎' }, { id: 'operations', label: 'Operations', icon: '◉' }, { id: 'connection', label: 'Connection', icon: '⌁' }];
+const pages = [{ id: 'metrics', label: 'Metrics', icon: '◴' }, { id: 'activity', label: 'Request explorer', icon: '⌕' }, { id: 'accounting', label: 'Usage & value', icon: '◈' }, { id: 'members', label: 'Members & keys', icon: '⚿' }, { id: 'approvals', label: 'Access requests', icon: '↳' }, { id: 'accounts', label: 'Accounts & sessions', icon: '◎' }, { id: 'operations', label: 'Operations', icon: '◉' }, { id: 'connection', label: 'Connection', icon: '⌁' }, { id: 'guide', label: 'Admin guide & MCP', icon: '?' }];
 function currentPage() { const id = location.hash.replace(/^#(?:view\/)?/, ''); return pages.some(page => page.id === id) ? id : 'metrics'; }
 function Brand() { return <a className="cu-brand" href="/manage"><svg width="32" height="32" viewBox="0 0 64 64" fill="none" aria-hidden="true"><rect x="1" y="1" width="62" height="62" rx="16" fill="#141d27" stroke="#293849" strokeWidth="2" /><path d="M43 16a21 21 0 1 0 0 32" stroke="#6a9fff" strokeWidth="5" strokeLinecap="round" /><path d="M28 39V30M38 39V23M48 39V17" stroke="#edf3fa" strokeWidth="5" strokeLinecap="round" /><circle cx="48" cy="17" r="4" fill="#6a9fff" /></svg><span>control-usage</span></a>; }
 export default function AdminApp() {
@@ -35,7 +36,7 @@ export default function AdminApp() {
   return <div className="cu-admin"><a className="cu-skip" href="#admin-content" onClick={event => { event.preventDefault(); document.getElementById('admin-content')?.focus(); }}>Skip to content</a><header className="cu-topbar"><Brand /><div className="cu-account">{session ? <><span>Administrator · @{session.user.username}</span><button disabled={logout.busy} onClick={async () => { try { await logout.run('/portal/api/logout', 'POST', {}); setSession(null); location.replace('/'); } catch { /* error below */ } }}>Sign out</button></> : <a href="/">Member portal</a>}</div></header>
     {!session ? <main className="cu-auth-state"><h1>Administrator access</h1><Notice error>{authError}</Notice>{authError ? <button onClick={() => setRetry(value => value + 1)}>Retry session check</button> : <p role="status">Checking your account…</p>}</main> : <>
       <aside className="cu-sidebar"><p className="cu-eyebrow">WORKSPACE</p><nav aria-label="Admin navigation">{pages.map(item => <a key={item.id} href={'#view/' + item.id} aria-current={page === item.id ? 'page' : undefined}><span aria-hidden="true">{item.icon}</span>{item.label}</a>)}</nav><div className="cu-sidebar-footer"><span className="cu-badge">GATEWAY</span><a href="/">Member portal ↗</a><p>Observed usage.<br />Not subscription billing.</p></div></aside>
-      <main id="admin-content" className="cu-content" tabIndex={-1}><Notice error>{logout.error}</Notice>{page === 'metrics' && <Metrics />}{page === 'activity' && <RequestExplorer />}{page === 'accounting' && <Accounting />}{page === 'members' && <Members />}{page === 'approvals' && <Approvals />}{page === 'accounts' && <Accounts />}{page === 'operations' && <Operations />}{page === 'connection' && <Connection />}</main>
+      <main id="admin-content" className="cu-content" tabIndex={-1}><Notice error>{logout.error}</Notice>{page === 'metrics' && <Metrics />}{page === 'activity' && <RequestExplorer />}{page === 'accounting' && <Accounting />}{page === 'members' && <Members />}{page === 'approvals' && <Approvals />}{page === 'accounts' && <Accounts />}{page === 'operations' && <Operations />}{page === 'connection' && <Connection />}{page === 'guide' && <Suspense fallback={<p role="status">Loading administrator guide…</p>}><AdminGuide /></Suspense>}</main>
     </>}
   </div>;
 }
