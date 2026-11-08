@@ -12,3 +12,13 @@ test('both guides have unique navigable sections and searchable procedures',asyn
   assert.equal(filterGuide(sections,'unfindable-quota-xyz').length,0);assert.equal(filterGuide(sections,'').length,sections.length);
  }
 });
+
+test('weekly quota labels remain distinct and Fable drilldowns preserve family scope',async()=>{
+ const quota=await readFile(new URL('../src/admin/quota.ts',import.meta.url),'utf8');
+ const {quotaLabel}=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(quota)).toString('base64'));
+ assert.equal(quotaLabel('seven_day'),'Weekly — all models');assert.equal(quotaLabel('seven_day_fable'),'Weekly — Fable');
+ const search=await readFile(new URL('../src/admin/search.ts',import.meta.url),'utf8');
+ const {readFilters,searchParams}=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(search)).toString('base64'));
+ const filters=readFilters('?rq_modelFamily=fable&rq_memberId=alice');assert.equal(filters.modelFamily,'fable');
+ assert.equal(searchParams(filters,{from:'2026-11-01T00:00:00Z',to:'2026-11-08T00:00:00Z'}).get('modelFamily'),'fable');
+});

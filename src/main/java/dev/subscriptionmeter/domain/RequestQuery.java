@@ -10,7 +10,7 @@ public interface RequestQuery {
     record Filter(Instant from, Instant to, String memberId, String model, String requestId,
                   String upstreamRequestId, String state, Integer status, String captureState,
                   Long minDurationMs, Long maxDurationMs, Boolean usageSeen, String provider,
-                  String upstreamAccount, String clientFamily, String keyPrefix, String category) {}
+                  String upstreamAccount, String clientFamily, String keyPrefix, String category, String modelFamily) {}
     record Position(Instant startedAt, String id) {}
     record Page(List<Map<String,Object>> items, String nextCursor, Instant asOf,
                 Instant from, Instant to, Instant generatedAt) {}

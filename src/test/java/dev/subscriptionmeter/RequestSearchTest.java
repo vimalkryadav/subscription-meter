@@ -24,7 +24,8 @@ class RequestSearchTest {
         controller=new RequestSearchController(new JdbcRequestQuery(jdbc,30));
     }
     void request(String id,Instant started,String model){jdbc.update("INSERT INTO requests(id,member_id,started_at,path,model,state,status_code,duration_ms,upstream_request_id,usage_seen) VALUES(?,'member',?,'/v1/messages',?,'complete',200,120,'provider-id',TRUE)",id,Timestamp.from(started),model);}
-    dev.subscriptionmeter.domain.RequestQuery.Page page(String cursor,int limit,String model){return controller.search(time.minusSeconds(1),time.plusSeconds(60),"",model,"","","",null,"",null,null,null,"","","","","",limit,cursor,new MockHttpServletResponse());}
+    dev.subscriptionmeter.domain.RequestQuery.Page page(String cursor,int limit,String model){return page(cursor,limit,model,"");}
+    dev.subscriptionmeter.domain.RequestQuery.Page page(String cursor,int limit,String model,String family){return controller.search(time.minusSeconds(1),time.plusSeconds(60),"",model,"","","",null,"",null,null,null,"","","","","",family,limit,cursor,new MockHttpServletResponse());}
     @Test void cursorOrderRemainsStableAndRejectsDifferentFilters(){
         request("a",time,"model");request("b",time,"model");request("c",time,"model");
         var first=page("",2,"");assertThat(first.items()).extracting(r->r.get("id")).containsExactly("c","b");assertThat(first.nextCursor()).isNotNull();
@@ -39,6 +40,15 @@ class RequestSearchTest {
         assertThat(page("",25,"' OR 1=1 --").items()).isEmpty();
         assertThat(page("",25,"").items().getFirst()).doesNotContainKeys("request_body","response_body","request_headers");
         assertThatThrownBy(()->page("",101,"")).hasMessageContaining("400");
+    }
+    @Test void fableFamilyFilterKeepsOtherModelsAndProvidersOutAndBindsCursor(){
+        request("fable-one",time,"claude-fable-5-1");request("fable-two",time,"FABLE");
+        request("opus",time,"claude-opus-5-5");request("foreign",time,"claude-fable-5-1");
+        jdbc.update("UPDATE requests SET provider='openai' WHERE id='foreign'");
+        assertThat(page("",25,"","fable").items()).extracting(r->r.get("id")).containsExactly("fable-two","fable-one");
+        var first=page("",1,"","fable");
+        assertThatThrownBy(()->page(first.nextCursor(),1,"","")).hasMessageContaining("400");
+        assertThatThrownBy(()->page("",25,"","unknown")).hasMessageContaining("400");
     }
     @Test void legacyTimestampMismatchAndBoundedEventExportRemainReadable() throws Exception {
         request("a",time,"model");Instant captureTime=time.minusMillis(3);
@@ -55,7 +65,7 @@ class RequestSearchTest {
     @Test void absentCaptureHasHonestUnavailableOrExpiredState(){
         request("new",time,"model");assertThat(page("",25,"").items().getFirst().get("capture_status")).isEqualTo("unavailable");
         Instant old=time.minusSeconds(40L*86400);request("old",old,"model");
-        var result=controller.search(old.minusSeconds(1),old.plusSeconds(1),"","","","","",null,"expired",null,null,null,"","","","","",25,"",new MockHttpServletResponse());
+        var result=controller.search(old.minusSeconds(1),old.plusSeconds(1),"","","","","",null,"expired",null,null,null,"","","","","","",25,"",new MockHttpServletResponse());
         assertThat(result.items()).hasSize(1);assertThat(result.items().getFirst().get("capture_status")).isEqualTo("expired");
     }
     @Test void incompleteResponsesNeverLookLikeCompleteCapturesAndFilterMatchesDetails(){
@@ -65,7 +75,7 @@ class RequestSearchTest {
             jdbc.update("INSERT INTO request_details(request_id,started_at,member_id,upstream_mode,method,path,capture_state) VALUES(?,?,'member','subscription','POST','/v1/messages',?)",state,Timestamp.from(time),state);
             assertThat(query.detail(state).orElseThrow().get("capture_status")).as(state).isEqualTo("incomplete");
         }
-        var page=controller.search(time.minusSeconds(1),time.plusSeconds(1),"","","","","",null,"incomplete",null,null,null,"","","","","",25,"",new MockHttpServletResponse());
+        var page=controller.search(time.minusSeconds(1),time.plusSeconds(1),"","","","","",null,"incomplete",null,null,null,"","","","","","",25,"",new MockHttpServletResponse());
         assertThat(page.items()).hasSize(5).allSatisfy(row->assertThat(row.get("capture_status")).isEqualTo("incomplete"));
         request("provider-error",time,"model");
         jdbc.update("INSERT INTO request_details(request_id,started_at,member_id,upstream_mode,method,path,capture_state,upstream_headers_ms,error_type) VALUES('provider-error',?,'member','subscription','POST','/v1/messages','upstream_error',1,'')",Timestamp.from(time));

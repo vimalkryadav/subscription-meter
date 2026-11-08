@@ -5,7 +5,7 @@ import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
+import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -20,10 +20,10 @@ public class QuotaUsageService {
     public record Member(String memberId, String name, long requests, long usageObserved,
                          long usageComplete, BigDecimal reportedTokens, BigDecimal gatewayTokenSharePercent,
                          BigDecimal allowanceUsedPercent) {}
-    public record Window(String provider, String account, String bucket, BigDecimal usedPercent,
+    public record Window(String provider, String account, String bucket, String modelScope, BigDecimal usedPercent,
                          Instant observedAt, Instant resetsAt, String source, String freshness,
-                         Instant startsAt, Instant gatewayThrough, long requests, long usageObserved,
-                         long usageComplete, BigDecimal reportedTokens, List<Member> members) {}
+                         Instant startsAt, Instant gatewayThrough, Long requests, Long usageObserved,
+                         Long usageComplete, BigDecimal reportedTokens, List<Member> members) {}
     public record Report(Instant generatedAt, String outsideUsage, List<Window> windows) {}
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -31,7 +31,7 @@ public class QuotaUsageService {
         var snapshots = jdbc.queryForList("""
             SELECT q.* FROM provider_quota_snapshots q
             WHERE q.trusted=TRUE AND q.provider='anthropic' AND (?='' OR q.provider=?)
-              AND q.bucket IN ('five_hour','seven_day') AND q.observed_at<=?
+              AND q.bucket IN ('five_hour','seven_day','seven_day_fable') AND q.observed_at<=?
               AND NOT EXISTS (SELECT 1 FROM provider_quota_snapshots newer
                 WHERE newer.trusted=TRUE AND newer.provider=q.provider
                   AND newer.upstream_account=q.upstream_account AND newer.bucket=q.bucket
@@ -39,7 +39,7 @@ public class QuotaUsageService {
                   AND (newer.observed_at>q.observed_at OR (newer.observed_at=q.observed_at AND newer.id>q.id)))
             ORDER BY q.upstream_account,q.bucket LIMIT 100
             """, provider, provider, Timestamp.from(now), Timestamp.from(now));
-        var windows = snapshots.stream().map(q -> {
+        var windows = new ArrayList<>(snapshots.stream().map(q -> {
             String bucket = q.get("bucket").toString();
             Instant observed = AccountingService.instant(q.get("observed_at"));
             Instant reset = AccountingService.instant(q.get("resets_at"));
@@ -48,18 +48,28 @@ public class QuotaUsageService {
             String freshness = !reset.isAfter(now) ? "reset_passed" : observed.isBefore(now.minusSeconds(300)) ? "stale" : "recent";
             // A reset outside the supported window cannot establish a useful reporting interval.
             boolean valid = !observed.isBefore(start) && observed.isBefore(reset);
-            List<Member> members = valid ? members(q.get("provider").toString(), q.get("upstream_account").toString(), start, through) : List.of();
+            boolean fable = bucket.equals("seven_day_fable");
+            List<Member> members = valid ? members(q.get("provider").toString(), q.get("upstream_account").toString(), start, through, fable) : List.of();
             BigDecimal tokens = members.stream().map(Member::reportedTokens).reduce(BigDecimal.ZERO, BigDecimal::add);
-            return new Window(q.get("provider").toString(), q.get("upstream_account").toString(), bucket,
+            return new Window(q.get("provider").toString(), q.get("upstream_account").toString(), bucket, fable ? "fable" : "all_models",
                 new BigDecimal(q.get("used_percentage").toString()), observed, reset, q.get("source").toString(),
                 valid ? freshness : "invalid_window", valid ? start : null, valid ? through : null,
                 members.stream().mapToLong(Member::requests).sum(), members.stream().mapToLong(Member::usageObserved).sum(),
                 members.stream().mapToLong(Member::usageComplete).sum(), tokens, members);
-        }).toList();
+        }).toList());
+        // A missing scoped observation is visible, but cannot borrow another bucket's percentage or reset.
+        for (String account : snapshots.stream().map(q -> q.get("upstream_account").toString()).distinct().toList()) {
+            for (String bucket : List.of("seven_day","seven_day_fable")) {
+                if (windows.stream().noneMatch(w -> w.account().equals(account) && w.bucket().equals(bucket)))
+                    windows.add(new Window("anthropic",account,bucket,bucket.equals("seven_day_fable")?"fable":"all_models",
+                        null,null,null,null,"unavailable",null,null,null,null,null,null,List.of()));
+            }
+        }
+        windows.sort(Comparator.comparing(Window::account).thenComparing(Window::bucket));
         return new Report(now, "unknown", windows);
     }
 
-    private List<Member> members(String provider, String account, Instant from, Instant to) {
+    private List<Member> members(String provider, String account, Instant from, Instant to, boolean fable) {
         var rows = jdbc.queryForList("""
             SELECT r.member_id,m.name,COUNT(*) AS requests,
               SUM(CASE WHEN r.usage_seen THEN 1 ELSE 0 END) AS observed,
@@ -69,8 +79,9 @@ public class QuotaUsageService {
                 ELSE 0 END),0) AS tokens
             FROM requests r JOIN members m ON m.id=r.member_id
             WHERE r.provider=? AND r.upstream_account=? AND r.started_at>=? AND r.started_at<?
+              AND (?=FALSE OR LOWER(r.model)='fable' OR LOWER(r.model) LIKE 'claude-fable-%')
             GROUP BY r.member_id,m.name ORDER BY tokens DESC,r.member_id
-            """, provider, account, Timestamp.from(from), Timestamp.from(to));
+            """, provider, account, Timestamp.from(from), Timestamp.from(to), fable);
         BigDecimal total = rows.stream().map(row -> new BigDecimal(row.get("tokens").toString())).reduce(BigDecimal.ZERO, BigDecimal::add);
         return rows.stream().map(row -> {
             BigDecimal tokens = new BigDecimal(row.get("tokens").toString());

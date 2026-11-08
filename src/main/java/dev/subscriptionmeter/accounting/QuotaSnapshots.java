@@ -15,10 +15,15 @@ public final class QuotaSnapshots {
     private final JdbcTemplate jdbc;
     public QuotaSnapshots(JdbcTemplate jdbc){this.jdbc=jdbc;}
     public void recordHeaders(String provider,String account,String raw,Instant observed) {
+        recordHeaders(provider,account,raw,observed,"");
+    }
+    public void recordHeaders(String provider,String account,String raw,Instant observed,String model) {
         if(!"anthropic".equals(provider) || raw==null || raw.length()>65536 || observed==null || observed.isAfter(Instant.now().plusSeconds(30)))return;
         JsonNode headers;
         try{headers=JSON.readTree(raw);}catch(RuntimeException invalid){return;}
-        for(var bucket:Map.of("5h","five_hour","7d","seven_day").entrySet()){
+        for(var bucket:Map.of("5h","five_hour","7d","seven_day","7d_oi","seven_day_fable").entrySet()){
+            // 7d_oi is model-scoped, not a universal Fable label. Require a recognized Fable request.
+            if(bucket.getKey().equals("7d_oi") && !dev.subscriptionmeter.domain.ModelFamilies.isFable(model))continue;
             String prefix="anthropic-ratelimit-unified-"+bucket.getKey();
             try{
                 String fraction=scalar(headers.path(prefix+"-utilization")), reset=scalar(headers.path(prefix+"-reset"));

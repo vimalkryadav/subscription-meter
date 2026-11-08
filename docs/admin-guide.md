@@ -128,7 +128,7 @@ An error rate is only as complete as the requests visible to the gateway. A brow
 
 ## Find requests and preserve an investigation
 
-Request explorer supports a time range plus member, model, request ID, upstream request ID, request state, HTTP status, capture state, minimum/maximum duration, usage presence, provider, upstream account, client family, key prefix and work category.
+Request explorer supports a time range plus member, model, model family, request ID, upstream request ID, request state, HTTP status, capture state, minimum/maximum duration, usage presence, provider, upstream account, client family, key prefix and work category.
 
 Start with a narrow time range and an exact request ID when possible. Add member or provider filters if the ID is unknown. A model filter is an exact value, not a general description such as “fast model.” Duration filters are milliseconds.
 
@@ -160,9 +160,13 @@ Credential redaction is best effort. Known authentication fields and common secr
 
 ## Session and weekly limits
 
-**Allowance** is the provider's usage limit included in the subscription. The dashboard tracks the provider's five-hour session and seven-day weekly observations. It does not assume the Pro plan has a fixed token capacity.
+**Allowance** is the provider's usage limit included in the subscription. The dashboard tracks three separate buckets: **Five-hour session**, **Weekly — all models** and **Weekly — Fable**. The all-models weekly bucket is the normal account-wide limit; the Fable bucket is a separate model-specific limit. It does not assume the Pro plan has a fixed token capacity.
 
 The Session & weekly limits cards show the last reported account utilization, provider observation time, reported reset, source and freshness. A reading older than five minutes is stale; a passed reset is labeled historical with current usage unknown. Refresh reloads recorded data and does not poll the provider or send an inference request. There are currently trusted collectors for supported upstream utilization headers and an optional Coder status-line file.
+
+Each bucket has its own percentage, reset and freshness. Do not add the two weekly percentages or subtract Fable from the all-models limit. A missing Fable observation stays Unknown, with no borrowed reset or invented member window. Fable readings may be absent when the retained traffic uses other models.
+
+The Fable member breakdown counts only Anthropic requests whose requested model is `fable` or begins `claude-fable-` (case-insensitive). Other or unrecognized model IDs are excluded. Its member links preserve a **Fable only** model-family filter in Request explorer. The all-models breakdown includes all recorded models, including Fable; the two breakdowns are overlapping views, not additive costs or quotas.
 
 The member breakdown derives its start from the reported reset minus five hours or seven days. Its end is the earlier of report generation and reset, exclusive. Requests are assigned by their start time. This convention does not establish how the provider accounts for a request that crosses a reset. Invalid intervals have no member breakdown.
 

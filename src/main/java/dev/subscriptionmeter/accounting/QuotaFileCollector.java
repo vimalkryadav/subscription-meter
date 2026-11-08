@@ -29,7 +29,7 @@ public class QuotaFileCollector {
             if(!account.matches("[a-zA-Z0-9_-]{1,80}"))return;
             Instant observed=Instant.parse(root.path("observedAt").asString());
             if(observed.isAfter(Instant.now().plusSeconds(30)) || observed.isBefore(Instant.now().minusSeconds(86400)))return;
-            for(String bucket:List.of("five_hour","seven_day")) {
+            for(String bucket:List.of("five_hour","seven_day","seven_day_fable")) {
                 var window=root.path("rate_limits").path(bucket);
                 if(!window.path("used_percentage").isNumber() || !window.path("resets_at").isIntegralNumber() || !window.path("resets_at").canConvertToLong())continue;
                 BigDecimal used=new BigDecimal(window.path("used_percentage").toString());

@@ -106,7 +106,7 @@ class QuotaUsageTest {
         snapshot("future", "primary", "seven_day", 90, now.plusSeconds(1), now.plusSeconds(86400), true);
         snapshot("other", "other", "seven_day", 50, now, now.plusSeconds(86400), true);
         var windows = service.report(now, "").windows();
-        assertThat(windows).hasSize(2);
+        assertThat(windows).filteredOn(w -> w.bucket().equals("seven_day")).hasSize(2);
         assertThat(windows.stream().filter(w -> w.account().equals("primary")).findFirst().orElseThrow().usedPercent()).isEqualByComparingTo("20");
         assertThat(service.report(now, "openai").windows()).isEmpty();
         jdbc.update("DELETE FROM provider_quota_snapshots");
@@ -131,5 +131,64 @@ class QuotaUsageTest {
         var window = service.report(now, "").windows().getFirst();
         assertThat(window.reportedTokens()).isEqualByComparingTo("200");
         assertThat(window.members()).hasSize(2).allSatisfy(member -> assertThat(member.gatewayTokenSharePercent()).isEqualByComparingTo("50"));
+    }
+
+    @Test void missingFableDoesNotBorrowTheAllModelsPercentageOrReset() {
+        snapshot("all", "primary", "seven_day", 40, now, now.plusSeconds(86400), true);
+        var fable = service.report(now, "").windows().stream().filter(w -> w.bucket().equals("seven_day_fable")).findFirst().orElseThrow();
+        assertThat(fable.modelScope()).isEqualTo("fable");
+        assertThat(fable.freshness()).isEqualTo("unavailable");
+        assertThat(fable.usedPercent()).isNull();assertThat(fable.observedAt()).isNull();assertThat(fable.resetsAt()).isNull();
+        assertThat(fable.startsAt()).isNull();assertThat(fable.requests()).isNull();assertThat(fable.reportedTokens()).isNull();
+        assertThat(fable.members()).isEmpty();
+    }
+
+    @Test void fableHasIndependentResetFreshnessAndOnlyFableMembersInItsDenominator() {
+        snapshot("all", "primary", "seven_day", 30, now, now.plusSeconds(86400), true);
+        snapshot("fable", "primary", "seven_day_fable", 80, now.minusSeconds(600), now.plusSeconds(2*86400), true);
+        request("alice", now.minusSeconds(3600), "primary", 100, true, true);
+        jdbc.update("UPDATE requests SET model='claude-fable-5-1' WHERE member_id='alice'");
+        request("bob", now.minusSeconds(3600), "primary", 300, true, true);
+        jdbc.update("UPDATE requests SET model='FABLE' WHERE member_id='bob'");
+        request("carol", now.minusSeconds(3600), "primary", 9600, true, true);
+        var windows = service.report(now, "").windows();
+        var all = windows.stream().filter(w -> w.bucket().equals("seven_day")).findFirst().orElseThrow();
+        var fable = windows.stream().filter(w -> w.bucket().equals("seven_day_fable")).findFirst().orElseThrow();
+        assertThat(all.usedPercent()).isEqualByComparingTo("30");assertThat(all.freshness()).isEqualTo("recent");
+        assertThat(all.reportedTokens()).isEqualByComparingTo("10000");
+        assertThat(fable.usedPercent()).isEqualByComparingTo("80");assertThat(fable.freshness()).isEqualTo("stale");
+        assertThat(fable.startsAt()).isEqualTo(now.minusSeconds(5*86400));assertThat(fable.resetsAt()).isNotEqualTo(all.resetsAt());
+        assertThat(fable.reportedTokens()).isEqualByComparingTo("400");
+        assertThat(fable.members()).extracting(member -> member.memberId()).containsExactly("bob", "alice");
+        assertThat(fable.members()).extracting(QuotaUsageService.Member::gatewayTokenSharePercent)
+            .containsExactly(new BigDecimal("75.00"),new BigDecimal("25.00"));
+    }
+
+    @Test void modelScopedHeaderRequiresRecognizedFableContextAndDoesNotOverwriteAllModels() {
+        var collector = new dev.subscriptionmeter.accounting.QuotaSnapshots(jdbc);
+        long reset = Instant.now().plusSeconds(86400).getEpochSecond();
+        String headers = "{\"anthropic-ratelimit-unified-7d-utilization\":\"0.3\",\"anthropic-ratelimit-unified-7d-reset\":\""+reset+"\","
+            + "\"anthropic-ratelimit-unified-7d_oi-utilization\":\"0.8\",\"anthropic-ratelimit-unified-7d_oi-reset\":\""+(reset+3600)+"\"}";
+        Instant observed = Instant.now();
+        collector.recordHeaders("anthropic","primary",headers,observed,"claude-opus-5-5");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM provider_quota_snapshots WHERE bucket='seven_day_fable'",Integer.class)).isZero();
+        collector.recordHeaders("anthropic","primary",headers,observed,"claude-fable-5-1");
+        collector.recordHeaders("anthropic","primary",headers,observed,"claude-fable-5-1");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM provider_quota_snapshots",Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT used_percentage FROM provider_quota_snapshots WHERE bucket='seven_day_fable'",BigDecimal.class)).isEqualByComparingTo("80");
+        assertThat(jdbc.queryForObject("SELECT used_percentage FROM provider_quota_snapshots WHERE bucket='seven_day'",BigDecimal.class)).isEqualByComparingTo("30");
+    }
+    @Test void trustedFileCanSupplyExplicitFableWithoutAliasingGenericOverage() throws Exception {
+        var file=java.nio.file.Files.createTempFile("quota-fable-test-",".json");
+        try {
+            Instant observed=Instant.now();long reset=observed.plusSeconds(86400).getEpochSecond();
+            java.nio.file.Files.writeString(file,"{\"upstreamAccount\":\"primary\",\"observedAt\":\""+observed+"\",\"rate_limits\":{"
+                +"\"seven_day\":{\"used_percentage\":30,\"resets_at\":"+reset+"},"
+                +"\"seven_day_fable\":{\"used_percentage\":80,\"resets_at\":"+(reset+3600)+"},"
+                +"\"seven_day_overage_included\":{\"used_percentage\":99,\"resets_at\":"+reset+"}}}");
+            var collector=new dev.subscriptionmeter.accounting.QuotaFileCollector(jdbc,file.toString());collector.collect();collector.collect();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM provider_quota_snapshots",Integer.class)).isEqualTo(2);
+            assertThat(jdbc.queryForObject("SELECT used_percentage FROM provider_quota_snapshots WHERE bucket='seven_day_fable'",BigDecimal.class)).isEqualByComparingTo("80");
+        } finally { java.nio.file.Files.deleteIfExists(file); }
     }
 }

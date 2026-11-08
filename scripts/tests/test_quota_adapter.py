@@ -37,6 +37,18 @@ class QuotaAdapterTests(unittest.TestCase):
                 self.assertEqual(target.read_text(), 'existing observation')
                 self.assertEqual(result.stdout + result.stderr, '')
 
+    def test_fable_stays_separate_and_generic_overage_is_not_relabelled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'quota.json'
+            self.run_adapter(target, {'rate_limits': {
+                'seven_day': {'used_percentage': 30, 'resets_at': 1900000000},
+                'seven_day_fable': {'used_percentage': 80, 'resets_at': 1900003600},
+                'seven_day_overage_included': {'used_percentage': 99, 'resets_at': 1900000000}}})
+            windows = json.loads(target.read_text())['rate_limits']
+            self.assertEqual(set(windows), {'seven_day', 'seven_day_fable'})
+            self.assertEqual(windows['seven_day_fable']['used_percentage'], 80)
+            self.assertNotEqual(windows['seven_day_fable']['resets_at'], windows['seven_day']['resets_at'])
+
 
 if __name__ == '__main__':
     unittest.main()

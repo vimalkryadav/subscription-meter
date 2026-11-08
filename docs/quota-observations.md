@@ -32,3 +32,11 @@ If newer requests have completed, check whether their retained response headers 
 For an explicitly configured file source, check its existence, permissions, update time and numeric report timestamp. An idle terminal can stop producing status-line observations. Mount a dedicated report directory read-only into the gateway if the writer uses atomic file replacement; an individual file bind mount can retain the old inode.
 
 The dashboard exposes the observation time, reported reset, age and source separately. Use the provider's own account usage view when a current account balance is required.
+
+## Separate Fable weekly bucket
+
+`seven_day` is the account-wide weekly bucket; `seven_day_fable` is a separate Fable weekly bucket. Each retains its own percentage, reset, observation time and freshness. The dashboard shows an unknown placeholder for a missing weekly bucket on an account with observations; it never copies another bucket's reset or assumes zero. Fable member shares use only Anthropic requested model IDs `fable` or `claude-fable-…`, case-insensitively. Request drilldowns preserve this model-family filter. All-models totals include Fable and must not be added to the Fable totals.
+
+The header adapter recognizes `anthropic-ratelimit-unified-7d_oi-utilization` and `…-7d_oi-reset` **only for a recognized Fable request**. The suffix represents a model-scoped overage-included window, so a generic occurrence on another model is not relabeled Fable. This is a versioned observational adapter, not a guarantee that every response provides the fields. The [firsthand Claude Code report](https://github.com/anthropics/claude-code/issues/92080) documents that header mapping; Claude's [usage-limit documentation](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work) confirms that some plans have a separate Fable limit.
+
+The optional numeric file collector also accepts explicit `rate_limits.seven_day_fable` with `used_percentage` and Unix-second `resets_at`. The published status-line schema currently documents the general five-hour/seven-day fields; native Fable emission must not be assumed. Generic `seven_day_overage_included` is not aliased without model identity. No provider call, CLI login change, fabricated observation or historical backfill is performed just to populate a missing card.
