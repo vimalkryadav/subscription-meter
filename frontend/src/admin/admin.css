@@ -46,3 +46,14 @@ body{min-width:320px}
 @media(min-width:761px) and (max-width:900px){.cu-admin .cu-thirds{grid-template-columns:1fr}}
 
 .cu-admin button.cu-primary:hover:not(:disabled){background:#85b0ff;border-color:#85b0ff;color:#07111f}
+
+.cu-admin .cu-quota-windows{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:20px}
+.cu-admin .cu-quota-window{min-width:0;border:1px solid var(--cu-border);border-radius:10px;padding:18px;background:#0d1824}
+.cu-admin .cu-quota-window .cu-bar{justify-content:space-between;flex-wrap:wrap}
+.cu-admin .cu-quota-window h3{margin:0;font-size:17px}
+.cu-admin .cu-quota-window h4{font-size:14px;margin-bottom:8px}
+.cu-admin .cu-quota-value{font-size:32px;font-weight:600;margin:18px 0 12px}
+.cu-admin .cu-quota-value span{display:block;font-size:12px;font-weight:400;color:var(--cu-muted);margin-top:4px}
+.cu-admin .cu-quota-window table{min-width:540px}
+.cu-admin .cu-quota-window td .cu-track{margin-top:8px}
+@media(max-width:1250px){.cu-admin .cu-quota-windows{grid-template-columns:1fr}}
