@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Persistent Claude Code gateway settings for macOS/Linux, with reversible setup."""
+"""Persistent Claude Code gateway settings for macOS, Linux and Windows, with undo."""
 import argparse
 from contextlib import contextmanager
-import fcntl
 from getpass import getpass
 import json
 import os
@@ -10,31 +9,106 @@ from pathlib import Path
 import re
 import shlex
 import stat
+import subprocess
 import tempfile
 from urllib.parse import urlsplit
 
+if os.name == 'nt':
+    import msvcrt
+else:
+    import fcntl
+
 MARKER = '# control-usage managed launcher v1'
+
+def redirected(path):
+    try:
+        info = path.lstat()
+        return stat.S_ISLNK(info.st_mode) or bool(getattr(info, 'st_file_attributes', 0) & 0x400)
+    except FileNotFoundError:
+        return False
+
+def windows_access(path, private=False):
+    # Pass paths as data, never interpolate them into PowerShell source. No key
+    # is passed to the child process. Fail closed on unsupported ACL filesystems.
+    script = r'''
+$ErrorActionPreference = 'Stop'
+$path = $env:CONTROL_USAGE_ACL_PATH
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$existing = Get-Acl -LiteralPath $path
+if ($existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 21 }
+if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
+    $directory = [System.IO.Directory]::Exists($path)
+    $acl = $existing
+    if ($directory) {
+        $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    } else {
+        $inherit = [System.Security.AccessControl.InheritanceFlags]::None
+    }
+    # Modify only the DACL. Replacing the entire security descriptor can
+    # request audit/SACL privileges that a standard user does not hold.
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))) {
+        $acl.RemoveAccessRuleSpecific($rule)
+    }
+    foreach ($identity in @($sid, [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', $inherit, 'None', 'Allow')
+        $acl.AddAccessRule($rule)
+    }
+    # Persist only modified sections; Set-Acl can request SACL privileges when
+    # applying a protected descriptor to a populated directory.
+    if ($directory) { [System.IO.Directory]::SetAccessControl($path, $acl) }
+    else { [System.IO.File]::SetAccessControl($path, $acl) }
+    $check = Get-Acl -LiteralPath $path
+    if (-not $check.AreAccessRulesProtected) { throw 'inheritance' }
+    foreach ($rule in $check.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        if ($rule.IdentityReference.Value -notin @($sid.Value, 'S-1-5-18')) { throw 'unexpected access' }
+    }
+}
+'''
+    executable = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    try:
+        subprocess.run([str(executable), '-NoProfile', '-NonInteractive', '-Command', script],
+                       env={**os.environ, 'CONTROL_USAGE_ACL_PATH': str(path),
+                            'CONTROL_USAGE_ACL_PRIVATE': '1' if private else '0',
+                            'PSModulePath': str(executable.parent / 'Modules')},
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=30, check=True)
+    except subprocess.CalledProcessError as error:
+        if error.returncode == 21:
+            raise ValueError('Setup files must be owned by your Windows user. Run in a normal, non-administrator terminal.') from None
+        raise ValueError('Could not apply private Windows file permissions (code '+str(error.returncode)+').') from None
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError('Could not verify private Windows file permissions. Use a local directory owned by your user.') from None
+
+def owned(path):
+    if os.name == 'nt':
+        windows_access(path)
+    elif path.stat().st_uid != os.getuid():
+        raise ValueError('Setup files must belong to your user.')
 
 def secure_directory(path):
     # Refuse redirected paths rather than writing a credential through a symlink.
     for parent in [*reversed(path.parents), path]:
-        if parent.is_symlink():
-            raise ValueError('A setup directory is a symlink; use a regular home directory.')
+        if redirected(parent):
+            raise ValueError('A setup directory is redirected; use a regular home directory.')
     path.mkdir(parents=True, exist_ok=True)
-    if path.stat().st_uid != os.getuid():
-        raise ValueError('Setup directory must belong to your user.')
-    path.chmod(0o700)
+    if os.name == 'nt': windows_access(path, private=True)
+    else:
+        owned(path)
+        path.chmod(0o700)
 
 def regular(path):
-    if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != os.getuid())):
+    if redirected(path) or (path.exists() and not path.is_file()):
         raise ValueError('Refusing an unsafe existing setup file.')
+    if path.exists(): owned(path)
 
 def atomic(path, content, mode):
     regular(path)
     fd, name = tempfile.mkstemp(prefix='.control-usage-', dir=path.parent)
     try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, 'w') as out:
+        with os.fdopen(fd, 'w', encoding='utf-8') as out:
+            if os.name == 'nt': windows_access(Path(name), private=True)
+            else: os.fchmod(out.fileno(), mode)
             out.write(content); out.flush(); os.fsync(out.fileno())
         os.replace(name, path)
     finally:
@@ -104,7 +178,7 @@ MANAGED = ('ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
 
 def read_settings(path):
     regular(path)
-    data = json.loads(path.read_text()) if path.exists() else {}
+    data = json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
     if not isinstance(data, dict) or not isinstance(data.get('env', {}), dict):
         raise ValueError('Existing settings are invalid; no settings replaced.')
     return data
@@ -115,17 +189,29 @@ def direct_files(home):
     secure_directory(folder)
     lock = folder / 'direct-setup.lock'
     regular(lock)
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, 'w') as handle:
-        os.fchmod(handle.fileno(), 0o600)
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        profile = home / '.claude'
-        secure_directory(profile)
-        yield profile / 'settings.json', folder / 'direct-setup-backup.json'
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    with os.fdopen(fd, 'r+b') as handle:
+        if os.name == 'nt':
+            windows_access(lock, private=True)
+            if os.fstat(fd).st_size == 0:
+                handle.write(b'\0'); handle.flush()
+            handle.seek(0)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            os.fchmod(fd, 0o600)
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            profile = home / '.claude'
+            secure_directory(profile)
+            yield profile / 'settings.json', folder / 'direct-setup-backup.json'
+        finally:
+            if os.name == 'nt':
+                handle.seek(0)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 def read_backup(path):
     regular(path)
-    state = json.loads(path.read_text())
+    state = json.loads(path.read_text(encoding='utf-8'))
     if (not isinstance(state, dict) or state.get('version') != 1
             or not isinstance(state.get('original'), dict)
             or not isinstance(state['original'].get('env', {}), dict)
@@ -190,9 +276,11 @@ def main():
     parser.add_argument('--remove', action='store_true', help='Undo setup, preserving later unrelated settings and history')
     parser.add_argument('--separate-profile', action='store_true', help='Use the optional claude-work profile instead of ordinary claude')
     args = parser.parse_args()
-    if os.name != 'posix': parser.error('This installer supports macOS and Linux.')
+    if os.name not in ('posix', 'nt'): parser.error('This installer supports macOS, Linux and Windows.')
+    if os.name == 'nt' and args.separate_profile:
+        parser.error('The optional separate-profile launcher requires macOS, Linux or WSL. Use default setup on native Windows.')
     try:
-        home = Path.home().resolve()
+        home = Path.home().absolute()
         if not args.separate_profile and os.environ.get('CLAUDE_CONFIG_DIR'):
             raise ValueError('CLAUDE_CONFIG_DIR is set. Unset it to configure ordinary claude, or choose --separate-profile.')
         if args.remove:

@@ -1,0 +1,1 @@
+.setup-platform{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.setup-platform button[aria-pressed="true"]{background:#204567;border-color:#73c9ef;color:#eef7ff}.setup-platform button[aria-pressed="false"]{background:transparent;border-color:#354a65;color:#bfd1e8}

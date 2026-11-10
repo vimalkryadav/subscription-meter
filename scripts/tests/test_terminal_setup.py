@@ -4,12 +4,14 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
 spec=importlib.util.spec_from_file_location('terminal_setup',Path(__file__).resolve().parents[2]/'frontend/setup/setup-claude.py')
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
+@unittest.skipUnless(os.name == 'posix', 'Optional shell launcher is Unix-only')
 class SetupTest(unittest.TestCase):
     def test_persists_reuses_and_removes_without_touching_personal_login(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -56,7 +58,10 @@ class DirectSetupTest(unittest.TestCase):
             backup = home / '.config/control-usage/direct-setup-backup.json'
             self.assertEqual(json.loads(backup.read_text())['original'], original)
             for private in (settings, backup):
-                self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o600)
+                if os.name == 'posix':
+                    self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o600)
+                else:
+                    self.assert_private_acl(private)
             data = json.loads(settings.read_text())
             self.assertEqual(data['hooks'], original['hooks'])
             self.assertEqual(data['permissions'], original['permissions'])
@@ -99,7 +104,7 @@ class DirectSetupTest(unittest.TestCase):
             self.assertEqual(json.loads(settings.read_text()), {})
 
     def test_unsafe_or_invalid_settings_are_not_replaced(self):
-        for kind in ('symlink', 'malformed', 'invalid-env', 'backup-link'):
+        for kind in (('malformed', 'invalid-env') if os.name == 'nt' else ('symlink', 'malformed', 'invalid-env', 'backup-link')):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp:
                 home = Path(temp).resolve(); folder = home / '.claude'; folder.mkdir()
                 settings = folder / 'settings.json'
@@ -114,9 +119,89 @@ class DirectSetupTest(unittest.TestCase):
                 if before is not None: self.assertEqual(settings.read_text(), before)
 
     def test_custom_config_directory_stops_before_prompt(self):
-        result = subprocess.run(['python3', str(Path(m.__file__)), '--url', 'https://example.com'],
+        result = subprocess.run([sys.executable, str(Path(m.__file__)), '--url', 'https://example.com'],
                                 env={**os.environ, 'CLAUDE_CONFIG_DIR': '/other/profile'},
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn('CLAUDE_CONFIG_DIR is set', result.stdout)
         self.assertNotIn('member key (hidden)', result.stderr)
+
+    def assert_private_acl(self, path):
+        script = r"""
+$ErrorActionPreference = 'Stop'
+$acl = Get-Acl -LiteralPath $env:CONTROL_USAGE_TEST_PATH
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+if (-not $acl.AreAccessRulesProtected) { throw 'inherited' }
+$rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+if ($rules.Count -ne 2) { throw 'rule count' }
+foreach ($rule in $rules) {
+ if ($rule.IdentityReference.Value -notin @($sid, 'S-1-5-18') -or $rule.AccessControlType -ne 'Allow' -or $rule.FileSystemRights -ne 'FullControl') { throw 'unsafe rule' }
+}
+"""
+        subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
+                       env={**os.environ, 'CONTROL_USAGE_TEST_PATH': str(path),
+                            'PSModulePath': str(Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/Modules')}, check=True,
+                       capture_output=True, timeout=30)
+
+    def test_unicode_settings_and_bom(self):
+        with tempfile.TemporaryDirectory(prefix='control usage ') as temp:
+            home = Path(temp).resolve() / 'équipe'; home.mkdir()
+            folder = home / '.claude'; folder.mkdir()
+            settings = folder / 'settings.json'
+            settings.write_text(json.dumps({'language': '日本語'}, ensure_ascii=False), encoding='utf-8-sig')
+            m.configure(home, 'https://example.com', self.key)
+            self.assertEqual(json.loads(settings.read_text(encoding='utf-8'))['language'], '日本語')
+            m.remove(home)
+            self.assertEqual(json.loads(settings.read_text(encoding='utf-8')), {'language': '日本語'})
+
+    @unittest.skipUnless(os.name == 'nt', 'Native Windows junction check')
+    def test_windows_junction_is_rejected_before_writing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp).resolve(); target = home / 'target'; target.mkdir()
+            link = home / '.claude'
+            subprocess.run(['cmd.exe', '/c', 'mklink', '/J', str(link), str(target)], check=True, capture_output=True)
+            try:
+                with self.assertRaises(ValueError): m.configure(home, 'https://example.com', self.key)
+                self.assertEqual(list(target.iterdir()), [])
+            finally:
+                link.rmdir()
+
+    def test_concurrent_setup_retains_first_backup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp).resolve(); folder = home / '.claude'; folder.mkdir()
+            (folder / 'settings.json').write_text('{"model":"keep"}')
+            code = "import importlib.util,os;from pathlib import Path;s=importlib.util.spec_from_file_location('setup',os.environ['SETUP_SCRIPT']);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);m.configure(Path(os.environ['SETUP_TEST_HOME']),os.environ['SETUP_TEST_URL'],'sm_'+'a'*32)"
+            processes = []
+            try:
+                for origin in ('https://one.example.com', 'https://two.example.com'):
+                    processes.append(subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        env={**os.environ, 'SETUP_SCRIPT': m.__file__, 'SETUP_TEST_HOME': str(home), 'SETUP_TEST_URL': origin}))
+                for process in processes:
+                    output = process.communicate(timeout=120)
+                    self.assertEqual(process.returncode, 0, output)
+                state = json.loads((home / '.config/control-usage/direct-setup-backup.json').read_text())
+                self.assertEqual(state['original'], {'model': 'keep'})
+                m.remove(home)
+                self.assertEqual(json.loads((folder / 'settings.json').read_text()), {'model': 'keep'})
+            finally:
+                for process in processes:
+                    if process.poll() is None: process.kill(); process.communicate()
+
+    @unittest.skipUnless(os.name == 'nt', 'Native Windows ACL diagnostics on an empty fixture')
+    def test_windows_private_directory(self):
+        from unittest.mock import patch
+        original_run = subprocess.run
+        def fixture_run(*args, **kwargs):
+            kwargs.update(stderr=subprocess.PIPE, text=True)
+            try: return original_run(*args, **kwargs)
+            except subprocess.CalledProcessError as error:
+                # This test only touches an empty temporary directory: no keys or settings.
+                raise AssertionError(error.stderr) from None
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp).resolve() / 'private'
+            with patch.object(m.subprocess, 'run', side_effect=fixture_run):
+                m.secure_directory(folder)
+                m.atomic(folder / 'empty-fixture', '', 0o600)
+                m.secure_directory(folder)
+                m.windows_access(folder / 'empty-fixture', private=True)
+            self.assert_private_acl(folder)
