@@ -97,7 +97,7 @@ class BackupTest(unittest.TestCase):
 
     def test_capacity_fails_closed_before_dump(self):
         with self.assertRaisesRegex(RuntimeError, 'budget'):
-            backup.capacity(3 * 1024**3)
+            backup.capacity(backup.MAX_DATABASE + 1)
         with patch.object(backup.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 1024})()):
             with self.assertRaisesRegex(RuntimeError, 'free space'):
                 backup.capacity(1024)
@@ -134,6 +134,48 @@ class BackupTest(unittest.TestCase):
         self.assertFalse(old.exists())
         self.assertTrue(latest.exists())
         self.assertEqual(7, len(backup.completed_archives()))
+
+    def test_coupled_policy_rejects_insufficient_store_and_invalid_values(self):
+        original = dict(backup.BUDGET)
+        path = self.store / 'policy.json'
+        for changes in ({'max_store_bytes': original['max_archive_bytes'] * 8}, {'max_database_bytes': 1}, {'restore_cpus': True}, {'warning_percent': 100}):
+            path.write_text(json.dumps({**original, **changes}))
+            with self.assertRaises(ValueError): backup.backup_policy.load(path)
+
+    def test_inventory_versions_preserve_old_archives_and_cover_recovery_state(self):
+        legacy = backup.inventory_sql(1); current = backup.inventory_sql(2)
+        self.assertNotIn('audit_operations', legacy)
+        for table in ('audit_operations','audit_payload_parts','control_schema_history','accounting_price_versions','admin_action_log'):
+            self.assertIn(table, current)
+        with self.assertRaises(ValueError): backup.inventory_sql(3)
+        archive, meta = self.archive()
+        with patch.object(backup,'output',return_value='owned-restore'),patch.object(backup,'docker'), \
+                patch.object(backup,'sql',return_value='1'),patch.object(backup,'inventory',return_value=meta['inventory']) as inv:
+            backup.restore(archive,meta)
+        inv.assert_called_once_with('owned-restore',1)
+
+    def test_capacity_warns_early_and_reserves_pending_archive_without_pruning(self):
+        archive, meta = self.archive()
+        meta['createdAt'] = '2026-11-10T14:00:00+00:00'
+        backup.write_json(archive.with_suffix('.json'),meta)
+        with archive.open('r+b') as handle: handle.truncate(int(backup.MAX_ARCHIVE * .85))
+        with patch.object(backup,'source',return_value=('source','image')),patch.object(backup,'sql',return_value='1000'), \
+                patch.object(backup.shutil,'disk_usage',return_value=type('Disk',(),{'free':20*1024**3})()),patch.object(backup,'prune') as prune:
+            result=backup.capacity_report()
+        self.assertEqual(result['status'],'warning')
+        self.assertEqual(result['rows'][0]['state'],'warning')
+        store=next(row for row in result['rows'] if row['id']=='store')
+        self.assertEqual(store['reserveBytes'],backup.MAX_ARCHIVE)
+        self.assertEqual(store['remainingBytes'],backup.MAX_STORE-store['usedBytes']-backup.MAX_ARCHIVE)
+        prune.assert_not_called()
+        self.assertNotIn(str(self.store),json.dumps(result))
+
+    def test_capacity_failure_does_not_export_dependency_error(self):
+        with patch.object(backup,'source',side_effect=RuntimeError('private credential')):
+            result=backup.capacity_report()
+        self.assertEqual(result['status'],'unknown')
+        self.assertEqual(result['rows'],[])
+        self.assertNotIn('credential',str(result))
 
 
 if __name__ == '__main__':

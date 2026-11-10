@@ -18,18 +18,37 @@ import shutil
 import subprocess
 import time
 import uuid
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import backup_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 STORE = Path(os.environ.get('CONTROL_USAGE_BACKUP_DIR', '/home/coder/control-usage-backups'))
 REPORT = ROOT / 'deploy/operations/backup-status.json'
-MAX_ARCHIVE = 512 * 1024**2
-MAX_STORE = 4 * 1024**3
-MIN_FREE = 4 * 1024**3
-TABLES = ('members', 'portal_accounts', 'portal_sessions', 'portal_key_requests',
+BUDGET = backup_policy.load()
+MAX_ARCHIVE = BUDGET["max_archive_bytes"]
+MAX_DATABASE = BUDGET["max_database_bytes"]
+MAX_STORE = BUDGET["max_store_bytes"]
+MIN_FREE = BUDGET["min_free_bytes"]
+LEGACY_TABLES = ('members', 'portal_accounts', 'portal_sessions', 'portal_key_requests',
           'requests', 'request_details', 'request_events', 'gateway_access',
           'request_assessments', 'provider_quota_snapshots', 'subscription_invoices')
-INVENTORY_SQL = 'SELECT json_build_object(' + ','.join(
-    "'%s',(SELECT count(*) FROM %s)" % (name, name) for name in TABLES) + ", 'adminCount',(SELECT count(*) FROM portal_accounts WHERE role='admin'), 'hypertables',(SELECT count(*) FROM timescaledb_information.hypertables), 'timescaleVersion',(SELECT extversion FROM pg_extension WHERE extname='timescaledb'))::text;"
+TABLES = LEGACY_TABLES + ('audit_operations', 'audit_payload_parts', 'accounting_price_versions',
+                         'admin_action_log', 'control_schema_history', 'gateway_instances',
+                         'coordination_locks', 'gateway_admissions', 'auth_attempts')
+
+def inventory_sql(version=2):
+    if version not in (1, 2): raise ValueError('Unsupported inventory version')
+    tables = LEGACY_TABLES if version == 1 else TABLES
+    query = 'SELECT json_build_object(' + ','.join(
+        "'%s',(SELECT count(*) FROM %s)" % (name, name) for name in tables)
+    query += ", 'adminCount',(SELECT count(*) FROM portal_accounts WHERE role='admin'), 'hypertables',(SELECT count(*) FROM timescaledb_information.hypertables), 'timescaleVersion',(SELECT extversion FROM pg_extension WHERE extname='timescaledb')"
+    if version == 2:
+        query += ", 'schemaFingerprint',(SELECT md5(string_agg(name||':'||checksum,',' ORDER BY name)) FROM control_schema_history)"
+        query += ", 'orphanPayloadParts',(SELECT count(*) FROM audit_payload_parts p WHERE NOT EXISTS(SELECT 1 FROM audit_operations o WHERE o.operation_id=p.operation_id))"
+    return query + ')::text;'
+
+INVENTORY_SQL = inventory_sql()
 
 
 def now():
@@ -120,8 +139,8 @@ def sql(container, query, database='meter', tcp=False):
                    '-U', 'meter', '-d', database] + (['-h', '127.0.0.1'] if tcp else []), input=query)
 
 
-def inventory(container):
-    return json.loads(sql(container, INVENTORY_SQL, tcp=True))
+def inventory(container, version=2):
+    return json.loads(sql(container, inventory_sql(version), tcp=True))
 
 
 def read_line(process):
@@ -191,7 +210,7 @@ def docker_storage_free():
 
 def capacity(database_bytes):
     used = sum(p.stat().st_size for p in STORE.iterdir() if p.is_file())
-    if database_bytes > 2 * 1024**3 or used + MAX_ARCHIVE > MAX_STORE:
+    if database_bytes > MAX_DATABASE or used + MAX_ARCHIVE > MAX_STORE:
         raise RuntimeError('Backup storage budget requires review')
     if shutil.disk_usage(STORE).free < max(MIN_FREE, database_bytes * 2 + MAX_ARCHIVE):
         raise RuntimeError('Insufficient free space for safe backup and restore')
@@ -199,12 +218,45 @@ def capacity(database_bytes):
         raise RuntimeError('Insufficient Docker storage for safe restore')
 
 
+def capacity_report():
+    """Fresh size-only observations; never runs a dump, restore or retention cleanup."""
+    result = {'schemaVersion': 1, 'generatedAt': now(), 'status': 'unknown', 'archiveObservedAt': None, 'rows': []}
+    try:
+        container, _ = source()
+        size = int(sql(container, "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SELECT pg_database_size(current_database()); COMMIT;"))
+        archives = completed_archives()
+        if not archives: raise ValueError('No completed archive')
+        _, archive, meta = archives[-1]
+        result['archiveObservedAt'] = meta['createdAt']
+        used = sum(p.stat().st_size for p in STORE.iterdir() if p.is_file())
+        required = max(MIN_FREE, size * 2 + MAX_ARCHIVE)
+        observations = [('archive', archive.stat().st_size, MAX_ARCHIVE, 0),
+                        ('database', size, MAX_DATABASE, 0),
+                        ('store', used, MAX_STORE, MAX_ARCHIVE),
+                        ('backup_free', required, shutil.disk_usage(STORE).free, 0),
+                        ('docker_free', required, docker_storage_free(), 0)]
+        for name, value, limit, reserve in observations:
+            state = 'failed' if value + reserve > limit else 'warning' if value * 100 >= limit * BUDGET['warning_percent'] else 'ok'
+            result['rows'].append({'id': name, 'usedBytes': value, 'limitBytes': limit,
+                                   'reserveBytes': reserve, 'remainingBytes': limit-value-reserve, 'state': state})
+        states = {row['state'] for row in result['rows']}
+        result['status'] = 'failed' if 'failed' in states else 'warning' if 'warning' in states else 'ok'
+    except Exception:
+        result['status'] = 'unknown'
+        result['rows'] = []
+    return result
+
+
+def write_capacity_report():
+    write_json(REPORT.with_name('backup-capacity.json'), capacity_report(), 0o644)
+
+
 def prune():
     # Only this program's completed backup pairs; never delete arbitrary files.
     archives = completed_archives()
     verified = [archive for _, archive, meta in archives if meta.get('verifiedAt')]
     protected = verified[-1] if verified else None
-    for manifest, archive, _ in archives[:-7]:
+    for manifest, archive, _ in archives[:-BUDGET['retain_completed']]:
         if archive == protected:
             continue
         archive.unlink()
@@ -234,7 +286,7 @@ def backup():
                 raise RuntimeError('Invalid archive header')
         os.replace(partial, archive)
         meta = {'createdAt': now(), 'image': image, 'sha256': digest(archive), 'databaseBytes': database_bytes,
-                'bytes': archive.stat().st_size, 'inventory': expected}
+                'bytes': archive.stat().st_size, 'inventoryVersion': 2, 'inventory': expected}
         write_json(archive.with_suffix('.json'), meta)
         update_status(lastSuccessAt=meta['createdAt'], lastAttemptState='ok', backupBytes=meta['bytes'])
         prune()
@@ -250,14 +302,14 @@ def restore(archive, meta):
         raise RuntimeError('Archive checksum mismatch')
     if shutil.disk_usage(STORE).free < MIN_FREE:
         raise RuntimeError('Insufficient restore space')
-    database_bytes = int(meta.get('databaseBytes', 2 * 1024**3))
-    if not 0 < database_bytes <= 2 * 1024**3 or docker_storage_free() < max(MIN_FREE, database_bytes * 2 + MAX_ARCHIVE):
+    database_bytes = int(meta.get('databaseBytes', MAX_DATABASE))
+    if not 0 < database_bytes <= MAX_DATABASE or docker_storage_free() < max(MIN_FREE, database_bytes * 2 + MAX_ARCHIVE):
         raise RuntimeError('Insufficient Docker restore space or invalid source size')
     name = 'control-usage-restore-' + uuid.uuid4().hex
     container = None
     try:
         container = output(['run', '-d', '--rm', '--name', name, '--network', 'none',
-                            '--label', 'dev.control-usage.restore-drill=true', '--memory', '768m', '--cpus', '0.5',
+                            '--label', 'dev.control-usage.restore-drill=true', '--memory', str(BUDGET['restore_memory_mib'])+'m', '--cpus', str(BUDGET['restore_cpus']),
                             '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-e', 'POSTGRES_USER=meter', '-e', 'POSTGRES_DB=meter',
                             '-e', 'TIMESCALEDB_TELEMETRY=off', '-e', 'NO_TS_TUNE=true',
                             '--mount', 'type=bind,src=' + str(archive.resolve()) + ',dst=/backup.dump,readonly',
@@ -276,7 +328,7 @@ def restore(archive, meta):
         docker(['exec', container, 'pg_restore', '-U', 'meter', '-d', 'meter', '--no-owner', '--no-acl',
                 '--exit-on-error', '/backup.dump'], stdout=subprocess.DEVNULL, timeout=900)
         sql(container, 'SELECT timescaledb_post_restore();', tcp=True)
-        if inventory(container) != meta['inventory']:
+        if inventory(container, meta.get('inventoryVersion', 1)) != meta['inventory']:
             raise RuntimeError('Restored inventory differs from the backup snapshot')
     finally:
         if container:
@@ -300,7 +352,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--verify-latest', action='store_true', help='Restore-test the newest completed backup only')
     parser.add_argument('--verify', action='store_true', help='Create a backup and immediately restore-test it')
+    parser.add_argument('--capacity', action='store_true', help='Collect sanitized size-only capacity observations')
     args = parser.parse_args()
+    if args.capacity:
+        write_capacity_report()
+        print('Backup capacity observations collected.')
+        return
     os.umask(0o077)
     STORE.mkdir(parents=True, exist_ok=True, mode=0o700)
     if STORE.is_symlink() or STORE.stat().st_uid != os.getuid():

@@ -13,7 +13,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / 'deploy/operations'
-CHECKS = ('gateway', 'prometheus', 'worker_ready', 'worker_lag', 'audit_guard', 'upstream_auth', 'disk', 'backup', 'restore')
+CHECKS = ('gateway', 'prometheus', 'worker_ready', 'worker_lag', 'audit_guard', 'upstream_auth', 'disk', 'backup', 'restore', 'backup_capacity')
 
 def read_json(path):
     with path.open('rb') as stream:
@@ -52,6 +52,12 @@ def backup_check(data, restore, now):
         except (ValueError, TypeError, AttributeError):
             healthy = False
     return ('ok' if healthy else 'failed', round(age, 2), 'hours')
+
+def capacity_check(data, now):
+    age = age_hours(data.get('generatedAt', ''), now)
+    if age > 3/60 or data.get('status') not in ('ok', 'warning', 'failed'):
+        return ('unknown', None, '')
+    return ('ok' if data['status'] == 'ok' else 'failed', None, '')
 
 def collect(now):
     result = {}
@@ -99,6 +105,7 @@ def collect(now):
     check('disk', disk)
     for restore, key in ((False, 'backup'), (True, 'restore')):
         check(key, lambda restore=restore: backup_check(read_json(REPORT_DIR/'backup-status.json'), restore, now))
+    check('backup_capacity', lambda: capacity_check(read_json(REPORT_DIR/'backup-capacity.json'), now))
     return result
 
 def report(checks, previous, now):

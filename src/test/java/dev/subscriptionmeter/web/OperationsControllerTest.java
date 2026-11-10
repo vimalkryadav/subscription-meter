@@ -13,7 +13,7 @@ class OperationsControllerTest {
     final Instant now=Instant.parse("2026-11-05T00:00:00Z");
     String report(Instant generated) {
         var rows=new ArrayList<Map<String,Object>>();
-        for(String id:List.of("gateway","prometheus","worker_ready","worker_lag","audit_guard","upstream_auth","disk","backup","restore"))
+        for(String id:List.of("gateway","prometheus","worker_ready","worker_lag","audit_guard","upstream_auth","disk","backup","restore","backup_capacity"))
             rows.add(Map.of("id",id,"state","ok","value",1,"consecutiveFailures",0,"unit","secret-unit","label","secret-label","payload","secret-capture"));
         return JsonMapper.builder().build().writeValueAsString(Map.of("schemaVersion",1,"generatedAt",generated.toString(),"checks",rows,"secret","credential"));
     }
@@ -26,7 +26,7 @@ class OperationsControllerTest {
     @Test void whitelistsMetadataAndMarksStaleAndFutureReports() throws Exception {
         Path file=folder.resolve("report.json");var controller=new OperationsController(file.toString(),Clock.fixed(now,ZoneOffset.UTC));
         Files.writeString(file,report(now));var result=controller.operations();
-        assertThat(result.status()).isEqualTo("ok");assertThat(result.checks()).hasSize(9);
+        assertThat(result.status()).isEqualTo("ok");assertThat(result.checks()).hasSize(10);
         assertThat(JsonMapper.builder().build().writeValueAsString(result)).doesNotContain("secret", "credential");
         Files.writeString(file,report(now.minusSeconds(181)));assertThat(controller.operations().stale()).isTrue();
         Files.writeString(file,report(now.plusSeconds(60)));assertThat(controller.operations().status()).isEqualTo("unavailable");
@@ -41,6 +41,19 @@ class OperationsControllerTest {
         assertThat(json.writeValueAsString(controller.recovery())).doesNotContain("not exported");
         report.put("generatedAt",now.minusSeconds(4501).toString());Files.writeString(file,json.writeValueAsString(report));assertThat(controller.recovery().stale()).isTrue();
         report.put("action","arbitrary-command");Files.writeString(file,json.writeValueAsString(report));assertThat(controller.recovery().status()).isEqualTo("unavailable");
+    }
+    @Test void capacityIsBoundedAllowlistedAndFreshnessAware() throws Exception {
+        var controller=new OperationsController(folder.resolve("report.json").toString(),Clock.fixed(now,ZoneOffset.UTC));
+        var rows=new ArrayList<Map<String,Object>>();
+        for(String id:List.of("archive","database","store","backup_free","docker_free"))rows.add(Map.of("id",id,"usedBytes",90L,"limitBytes",100L,"reserveBytes",0L,"remainingBytes",10L,"state","warning","secret","private"));
+        var report=new HashMap<String,Object>();report.put("schemaVersion",1);report.put("generatedAt",now.toString());report.put("archiveObservedAt",now.minusSeconds(100).toString());report.put("rows",rows);
+        Path file=folder.resolve("backup-capacity.json");var json=JsonMapper.builder().build();
+        Files.writeString(file,json.writeValueAsString(report));
+        assertThat(controller.capacity().status()).isEqualTo("warning");assertThat(controller.capacity().stale()).isFalse();
+        assertThat(json.writeValueAsString(controller.capacity())).doesNotContain("secret","private");
+        report.put("generatedAt",now.minusSeconds(181).toString());Files.writeString(file,json.writeValueAsString(report));assertThat(controller.capacity().stale()).isTrue();
+        rows.removeLast();Files.writeString(file,json.writeValueAsString(report));assertThat(controller.capacity().rows()).isEmpty();
+        Files.writeString(file,"x".repeat(4097));assertThat(controller.capacity().status()).isEqualTo("unknown");
     }
     @Test void endpointRequiresLiveAdminAuthority() throws Exception {
         var accounts=org.mockito.Mockito.mock(dev.subscriptionmeter.portal.AccountRepository.class);
@@ -60,6 +73,7 @@ class OperationsControllerTest {
             assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
         }
         assertThat(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/admin/operations").servletPath("/admin/operations")).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/admin/backup-capacity").servletPath("/admin/backup-capacity")).andReturn().getResponse().getStatus()).isEqualTo(401);
         assertThat(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/admin/recovery").servletPath("/admin/recovery")).andReturn().getResponse().getStatus()).isEqualTo(401);
     }
 

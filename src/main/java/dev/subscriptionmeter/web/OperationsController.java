@@ -17,7 +17,7 @@ public class OperationsController {
         Map.entry("gateway","Gateway readiness"), Map.entry("prometheus","Gateway metrics collection"),
         Map.entry("worker_ready","Audit worker readiness"), Map.entry("worker_lag","Audit projection lag"),
         Map.entry("audit_guard","Audit admission guard"), Map.entry("upstream_auth","Upstream authentication responses"),
-        Map.entry("disk","Workspace disk headroom"), Map.entry("backup","Latest backup"), Map.entry("restore","Latest restore rehearsal"));
+        Map.entry("disk","Workspace disk headroom"), Map.entry("backup","Latest backup"), Map.entry("restore","Latest restore rehearsal"), Map.entry("backup_capacity","Backup capacity headroom"));
     private static final Map<String,String> UNITS = Map.of("worker_lag","records","upstream_auth","responses / 10 min","disk","GiB free","backup","hours","restore","hours");
     @org.springframework.beans.factory.annotation.Autowired
     public OperationsController(@Value("${METER_OPERATIONS_REPORT:}") String path) { this(path, Clock.systemUTC()); }
@@ -65,6 +65,32 @@ public class OperationsController {
             Instant at=Instant.parse(root.path("generatedAt").asText());long age=Duration.between(at,clock.instant()).getSeconds();
             return new Recovery(at.toString(),status,action,failed,age>4500||age< -30);
         }catch(Exception ignored){return new Recovery(null,"unavailable","none",List.of(),true);}
+    }
+    public record CapacityRow(String id,long usedBytes,long limitBytes,long reserveBytes,long remainingBytes,String state) {}
+    public record Capacity(String generatedAt,String archiveObservedAt,String status,boolean stale,List<CapacityRow> rows) {}
+    @GetMapping("/admin/backup-capacity") public Capacity capacity() {
+        try {
+            if(path.isBlank())throw new IllegalStateException();
+            byte[] bytes;
+            try(var stream=Files.newInputStream(Path.of(path).resolveSibling("backup-capacity.json"))){bytes=stream.readNBytes(4097);}
+            if(bytes.length>4096)throw new IllegalStateException();
+            var root=json.readTree(bytes);
+            if(root.path("schemaVersion").asInt()!=1||!root.path("rows").isArray()||root.path("rows").size()!=5)throw new IllegalStateException();
+            Instant at=Instant.parse(root.path("generatedAt").asText());
+            Instant archiveAt=Instant.parse(root.path("archiveObservedAt").asText());
+            long age=Duration.between(at,clock.instant()).getSeconds();
+            var rows=new ArrayList<CapacityRow>();var seen=new HashSet<String>();
+            for(var item:root.path("rows")){
+                String id=item.path("id").asText(),state=item.path("state").asText();
+                if(!Set.of("archive","database","store","backup_free","docker_free").contains(id)||!seen.add(id)||!Set.of("ok","warning","failed").contains(state))throw new IllegalStateException();
+                for(String key:List.of("usedBytes","limitBytes","reserveBytes","remainingBytes"))if(!item.path(key).isIntegralNumber())throw new IllegalStateException();
+                long used=item.path("usedBytes").asLong(),limit=item.path("limitBytes").asLong(),reserve=item.path("reserveBytes").asLong(),remaining=item.path("remainingBytes").asLong();
+                if(used<0||limit<0||reserve<0||used>1e15||limit>1e15||reserve>1e15||remaining!=limit-used-reserve)throw new IllegalStateException();
+                rows.add(new CapacityRow(id,used,limit,reserve,remaining,state));
+            }
+            String status=rows.stream().anyMatch(r->r.state().equals("failed"))?"failed":rows.stream().anyMatch(r->r.state().equals("warning"))?"warning":"ok";
+            return new Capacity(at.toString(),archiveAt.toString(),status,age>180||age< -30,List.copyOf(rows));
+        }catch(Exception ignored){return new Capacity(null,null,"unknown",true,List.of());}
     }
     private Report unavailable() { return new Report(null,"unavailable",true,List.of()); }
 }
