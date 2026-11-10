@@ -19,6 +19,11 @@ try {
     $child = @'
 import os, subprocess, sys, ctypes
 from pathlib import Path
+from ctypes import wintypes
+ctypes.windll.kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+ctypes.windll.advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+ctypes.windll.userenv.GetUserProfileDirectoryW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+ctypes.windll.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 # Build the actual logged-on user's profile environment before starting PowerShell.
 token = ctypes.c_void_p()
 if not ctypes.windll.advapi32.OpenProcessToken(ctypes.windll.kernel32.GetCurrentProcess(), 8, ctypes.byref(token)):
