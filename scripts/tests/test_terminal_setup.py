@@ -185,3 +185,19 @@ foreach ($rule in $rules) {
             finally:
                 for process in processes:
                     if process.poll() is None: process.kill(); process.communicate()
+
+    @unittest.skipUnless(os.name == 'nt', 'Native Windows ACL diagnostics on an empty fixture')
+    def test_windows_private_directory(self):
+        from unittest.mock import patch
+        original_run = subprocess.run
+        def fixture_run(*args, **kwargs):
+            kwargs.update(stderr=subprocess.PIPE, text=True)
+            try: return original_run(*args, **kwargs)
+            except subprocess.CalledProcessError as error:
+                # This test only touches an empty temporary directory: no keys or settings.
+                raise AssertionError(error.stderr) from None
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp).resolve() / 'private'
+            with patch.object(m.subprocess, 'run', side_effect=fixture_run):
+                m.secure_directory(folder)
+            self.assert_private_acl(folder)
