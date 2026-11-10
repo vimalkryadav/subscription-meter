@@ -511,4 +511,4 @@ identifiers to keep operational resources stable; the platform name is control-u
 
 ### Persistent member terminal setup
 
-The member portal and admin Connection view provide a downloadable one-time macOS/Linux installer. It saves a private dedicated Claude profile and installs `~/.local/bin/claude-work`, usable from every new terminal without re-exporting the member key. It preserves personal Claude login and shell startup files. See [the admin guide](docs/admin-guide.md#one-time-terminal-setup) for rotation, removal and limitations.
+The member portal and admin Connection view provide one copyable macOS/Linux setup command with a hidden member-key prompt. The default merges persistent gateway settings into `~/.claude/settings.json`, so users run ordinary `claude` across terminals. A private backup supports undo while preserving later edits. An optional separate profile retains the `claude-work` launcher for users keeping personal and work accounts separate. See [the admin guide](docs/admin-guide.md#one-time-terminal-setup) for rotation, removal and limitations.
