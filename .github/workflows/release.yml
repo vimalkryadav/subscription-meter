@@ -14,7 +14,17 @@ concurrency:
   group: control-usage-production
   cancel-in-progress: false
 jobs:
+  windows-setup:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s scripts/tests -p 'test_terminal_setup.py' -v
   build:
+    needs: windows-setup
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

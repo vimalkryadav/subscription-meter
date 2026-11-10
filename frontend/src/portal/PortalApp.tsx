@@ -28,9 +28,9 @@ export default function PortalApp() {
   const generation = useRef(0);
   const confirmButton = useRef<HTMLButtonElement>(null);
   const rotationTrigger = useRef<HTMLButtonElement>(null);
+  const tokenHeading = useRef<HTMLHeadingElement>(null);
   const gateway = location.origin + (location.protocol === 'https:' ? '/gateway' : '');
   const limits = access?.state === 'active' ? access.member ?? access.request : access?.request;
-  const settings = `export ANTHROPIC_BASE_URL="${gateway}"\nexport ANTHROPIC_AUTH_TOKEN="${token || '<your-member-key>'}"\nunset ANTHROPIC_API_KEY\nclaude`;
   function signedOut() {
     generation.current++;
     setCsrf(''); setSession(null); setAccess(null); setToken(''); setRotate(false); setNotice('');
@@ -63,6 +63,7 @@ export default function PortalApp() {
     return () => { alive = false; abort.abort(); window.removeEventListener('control-usage:session-expired', expired); };
   }, []);
   useEffect(() => { if (rotate) confirmButton.current?.focus(); }, [rotate]);
+  useEffect(() => { if (token) tokenHeading.current?.focus(); }, [token]);
   function closeRotation() { setRotate(false); rotationTrigger.current?.focus(); }
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -114,8 +115,9 @@ export default function PortalApp() {
           {access?.state === 'approved' && <button disabled={busy} onClick={() => issue(false)}>Get my auth token</button>}
           {access?.state === 'active' && <button ref={rotationTrigger} disabled={busy} className="secondary" onClick={() => setRotate(true)}>Rotate token</button>}
           {access && ['approved', 'active'].includes(access.state) && <p className="muted">Tokens are shown once. Rotating immediately invalidates your previous token.</p>}
-        </section><section className="card"><h2>Connect your terminal</h2><ConnectionSetup gateway={gateway} /><details><summary>Temporary setup · this terminal only</summary><p className="muted">After approval, use your personal token with these settings.</p><pre>{settings}</pre><button className="secondary" onClick={() => copy(settings)}>Copy settings</button><p className="muted">Your requests are forwarded to Anthropic through control-usage.</p></details></section></div>
-        {token && <section className="card success"><div className="row"><h2>Your ANTHROPIC_AUTH_TOKEN</h2><div className="actions"><button onClick={() => copy(token)}>Copy token</button><button className="secondary" onClick={() => setToken('')}>I saved it · Hide</button></div></div><p>Save this token now. It cannot be retrieved again after you leave this page. Keep it private.</p><pre>{token}</pre></section>}
+          {token && <section className="token-reveal" aria-labelledby="token-title"><h3 id="token-title" ref={tokenHeading} tabIndex={-1}>Save your new token</h3><p>Shown once. Copy it now, then paste it at the setup command’s hidden prompt. Keep it private.</p><pre>{token}</pre><div className="actions"><button onClick={() => copy(token)}>Copy token</button><button className="secondary" onClick={() => { setToken(''); rotationTrigger.current?.focus(); }}>I saved it · Hide</button></div></section>}
+        </section><section className="card"><h2>Connect your terminal</h2>{access?.state === 'active' ? <ConnectionSetup gateway={gateway} /> : <p>Once your request is approved, retrieve your token here to see the setup command.</p>}</section></div>
+
         <section className="card" style={{ marginTop: 24 }}><h2>Your usage · Last 30 days</h2><p className="muted">Observed tokens for your account. This is not a subscription balance or a bill.</p><div className="scroll"><table><thead><tr>{['Model', 'State', 'Requests', 'Input', 'Output', 'Cache write', 'Cache read'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{access?.usage.map((row, index) => <tr key={`${row.model}-${row.state}-${index}`}>{[row.model, row.state, row.requests, row.input_tokens, row.output_tokens, row.cache_creation_input_tokens, row.cache_read_input_tokens].map((value, i) => <td key={i}>{typeof value === 'number' ? value.toLocaleString() : value}</td>)}</tr>)}{access && !access.usage.length && <tr><td colSpan={7}>No requests yet.</td></tr>}</tbody></table></div></section>
       </section>}
     </main><footer>control-usage · Access is approved by your administrator.</footer>
