@@ -50,7 +50,21 @@ public class GatewayController {
         }
         gateway.forward(member, (AuditContext)request.getAttribute(GatewayAccessFilter.CONTEXT), model, headers, body,
                 new ResponseSink() {
+                    private final Map<String,java.util.List<String>> prior = new HashMap<>();
+                    public boolean committed() { return response.isCommitted(); }
+                    public void prepareError(int status) {
+                        if(response.isCommitted())return;
+                        response.resetBuffer();
+                        prior.forEach((name,values)->{
+                            response.setHeader(name,null);
+                            for(String value:values)response.addHeader(name,value);
+                        });
+                        response.setHeader("Cache-Control","no-store");
+                        if(status==503)response.setHeader("Retry-After","10");
+                        response.setStatus(status);
+                    }
                     public void start(int status, Map<String, String> outgoing) {
+                        outgoing.keySet().forEach(name->prior.put(name,java.util.List.copyOf(response.getHeaders(name))));
                         response.setStatus(status); outgoing.forEach(response::setHeader);
                     }
                     public void write(byte[] data, int length) throws IOException {

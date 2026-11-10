@@ -39,7 +39,9 @@ public class GatewayService {
 
     public void forward(Member member, AuditContext context, String model,
                         Map<String, String> headers, byte[] body, ResponseSink sink) {
-        try (var tracked = deployment.enter(); var permit = limiter.acquire(member)) {
+        long totalStarted=System.nanoTime();
+        var delivery=new ResponseDelivery(sink,metrics,totalStarted);
+        try (var tracked = deployment.enter(); var permit = acquire(member)) {
             requireLease();
             audits.requireReady();
             String id = context.id(), method=context.method(), path=context.path(), query=context.query();
@@ -51,14 +53,15 @@ public class GatewayService {
             metrics.started();
             String state = "upstream_error", upstreamId = "";
             int status = 502;
-            boolean responseStarted = false;
             UsageObserver observer = null;
             AuditCapture capture = null;
             try {
               ledger.identify(id,protocol.id(),"primary",client);
-              capture=audits.begin(context,member.id(),body);
+              long auditStarted=System.nanoTime();
+              try { capture=audits.begin(context,member.id(),body); }
+              finally { metrics.phase(GatewayMetrics.Phase.REQUEST_AUDIT,auditStarted); }
               requireLease();
-              try (var reply = transport.send(method, path + (query == null ? "" : "?" + query), headers, body)) {
+              try (var reply = send(method, path + (query == null ? "" : "?" + query), headers, body)) {
                 status = reply.status();
                 Map<String, String> outgoing = new HashMap<>();
                 reply.headers().forEach((name, values) -> {
@@ -73,7 +76,7 @@ public class GatewayService {
                 observer = protocol.observer(streaming);
                 outgoing.put("x-meter-request-id", id);
                 outgoing.put("cache-control", "no-store"); outgoing.put("x-accel-buffering", "no");
-                sink.start(status, outgoing); responseStarted = true;
+                delivery.start(status, outgoing);
                 state = status >= 400 ? "upstream_error" : "partial";
                 byte[] buffer = new byte[8192];
                 int count;
@@ -82,46 +85,69 @@ public class GatewayService {
                     if (!streaming && (totalBytes += count) > 32 * 1024 * 1024) throw new IOException("Response size limit");
                     observer.accept(buffer, count);
                     requireLease();
-                    try { capture.forward(buffer,count,sink::write); }
-                    catch (IOException disconnected) { capture.error(disconnected); state = "disconnected"; return; }
+                    long forwardingStarted=System.nanoTime();
+                    try { capture.forward(buffer,count,delivery::write); }
+                    finally { metrics.phase(GatewayMetrics.Phase.FORWARDING,forwardingStarted); }
                 }
-                capture.completeForwarding(sink::write);
+                long forwardingStarted=System.nanoTime();
+                try { capture.completeForwarding(delivery::write); }
+                finally { metrics.phase(GatewayMetrics.Phase.FORWARDING,forwardingStarted); }
                 if (!streaming) observer.finishJson();
                 if (status < 400) state = observer.error() ? "stream_error" :
                         !protocol.inference(path) || observer.complete() ? "complete" : "partial";
               }
+            } catch (ResponseDelivery.DownstreamFailure e) {
+                if(capture!=null)capture.error(e);state="disconnected";
+                if(!delivery.committed()){status=499;delivery.prepareError(status);}
             } catch (InterruptedException e) {
                 if (capture != null) capture.error(e);
                 Thread.currentThread().interrupt(); state = "interrupted";
-                if (!responseStarted) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Upstream interrupted");
+                if (!delivery.committed()) { status=502;delivery.prepareError(status);throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Upstream interrupted"); }
             } catch (IOException e) {
                 if (capture != null) capture.error(e);
-                state = responseStarted ? "partial" : "upstream_error";
-                if (!responseStarted) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Upstream unavailable");
+                state = delivery.committed() ? "partial" : "upstream_error";
+                if (!delivery.committed()) { status=502;delivery.prepareError(status);throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Upstream unavailable"); }
             } catch (RuntimeException e) {
                 state="gateway_error";
-                if(!responseStarted && e instanceof ResponseStatusException unavailable)status=unavailable.getStatusCode().value();
+                if(!delivery.committed()){status=e instanceof ResponseStatusException unavailable?unavailable.getStatusCode().value():500;delivery.prepareError(status);}
                 if (capture != null) capture.error(e);
                 throw e;
             } finally {
+                long finalizeStarted=System.nanoTime();
                 try {
                     if (capture != null) capture.finish(state);
                 } catch(RuntimeException auditFailure) {
+                    if(!delivery.committed()){
+                        status=auditFailure instanceof ResponseStatusException unavailable?unavailable.getStatusCode().value():500;
+                        state="gateway_error";delivery.prepareError(status);
+                    }
                     metrics.persistenceFailed();
                     deployment.persistenceFailed();
                     LOG.error("Final audit write failed for request {}; reconciliation required",id);
                     throw auditFailure;
                 } finally {
+                metrics.phase(GatewayMetrics.Phase.CAPTURE_FINALIZATION,finalizeStarted);
                 RequestResult result = new RequestResult(state, status, (System.nanoTime() - start) / 1_000_000,
                         upstreamId, observer == null ? Usage.empty() : observer.snapshot());
+                long resultStarted=System.nanoTime();
                 try { ledger.finish(id, result); }
                 catch (RuntimeException e) {
                     metrics.persistenceFailed();
                     deployment.persistenceFailed();
                     LOG.error("Usage write failed for request {}; pending record needs reconciliation", id);
-                } finally { metrics.finished(result); }
+                } finally { metrics.phase(GatewayMetrics.Phase.RESULT_AUDIT,resultStarted);metrics.finished(result); }
                 }
             }
-        }
+        } finally { metrics.phase(GatewayMetrics.Phase.TOTAL_GATEWAY,totalStarted); }
+    }
+    private RequestLimiter.Permit acquire(Member member) {
+        long started=System.nanoTime();
+        try { return limiter.acquire(member); }
+        finally { metrics.phase(GatewayMetrics.Phase.ADMISSION,started); }
+    }
+    private UpstreamTransport.Reply send(String method,String path,Map<String,String> headers,byte[] body) throws IOException,InterruptedException {
+        long started=System.nanoTime();
+        try { return transport.send(method,path,headers,body); }
+        finally { metrics.phase(GatewayMetrics.Phase.UPSTREAM_HEADERS,started); }
     }
 }
