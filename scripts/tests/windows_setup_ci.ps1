@@ -17,25 +17,33 @@ try {
     & icacls.exe $repo /grant "${name}:(OI)(CI)RX" /T /Q | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Cannot grant checkout read access' }
     $child = @'
-$ErrorActionPreference = 'Stop'
-$env:PSModulePath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules"
-$env:TEMP = '__ROOT__'
-$env:TMP = '__ROOT__'
-Set-Location -LiteralPath '__REPO__'
-& '__PYTHON__' -m unittest discover -s scripts/tests -p test_terminal_setup.py -v
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& '__NODE__' --test frontend/tests/setup-command.test.mjs
-exit $LASTEXITCODE
+import os, subprocess, sys, ctypes
+from pathlib import Path
+# Build the actual logged-on user's profile environment before starting PowerShell.
+token = ctypes.c_void_p()
+if not ctypes.windll.advapi32.OpenProcessToken(ctypes.windll.kernel32.GetCurrentProcess(), 8, ctypes.byref(token)):
+    raise ctypes.WinError()
+try:
+    size = ctypes.c_ulong(32768)
+    profile = ctypes.create_unicode_buffer(size.value)
+    if not ctypes.windll.userenv.GetUserProfileDirectoryW(token, profile, ctypes.byref(size)):
+        raise ctypes.WinError()
+finally:
+    ctypes.windll.kernel32.CloseHandle(token)
+os.environ.update(USERPROFILE=profile.value, APPDATA=str(Path(profile.value)/'AppData/Roaming'),
+    LOCALAPPDATA=str(Path(profile.value)/'AppData/Local'), TEMP=str(Path(__file__).parent), TMP=str(Path(__file__).parent))
+os.environ['PSModulePath'] = str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/Modules')
+os.chdir(sys.argv[1])
+for command in ([sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_terminal_setup.py', '-v'],
+                [sys.argv[2], '--test', 'frontend/tests/setup-command.test.mjs']):
+    result = subprocess.run(command)
+    if result.returncode: sys.exit(result.returncode)
 '@
-    $child = $child.Replace('__ROOT__', $root.Replace("'", "''")).Replace('__REPO__', $repo.Replace("'", "''")).Replace('__PYTHON__', $python.Replace("'", "''")).Replace('__NODE__', $node.Replace("'", "''"))
     # CreateProcessWithLogonW limits the command line to 1024 characters.
-    # Keep the bootstrap short; the fixture script contains no credentials.
-    $childPath = Join-Path $root 'checks.ps1'
+    $childPath = Join-Path $root 'checks.py'
     Set-Content -LiteralPath $childPath -Value $child -Encoding UTF8
-    $bootstrap = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('$childPath')))"
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
     Start-Service seclogon
-    $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credential -LoadUserProfile -UseNewEnvironment -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -WorkingDirectory $root -RedirectStandardOutput "$root\stdout.log" -RedirectStandardError "$root\stderr.log" -Wait -PassThru
+    $process = Start-Process -FilePath $python -Credential $credential -LoadUserProfile -UseNewEnvironment -ArgumentList @('-u', "`"$childPath`"", "`"$repo`"", "`"$node`"") -WorkingDirectory $root -RedirectStandardOutput "$root\stdout.log" -RedirectStandardError "$root\stderr.log" -Wait -PassThru
     Get-Content -LiteralPath "$root\stdout.log"
     Get-Content -LiteralPath "$root\stderr.log"
     if ($process.ExitCode -ne 0) { throw "Native Windows checks failed: $($process.ExitCode)" }
