@@ -46,7 +46,7 @@ jobs:
       - name: Verify replay, safety and concurrent streaming
         env:
           AUDIT_INTEGRATION: 'true'
-        run: mvn --batch-mode --no-transfer-progress -Dtest=AuditKafkaIntegrationTest,KafkaSafetyIntegrationTest,AuditStreamLoadTest,KafkaApplicationContextIntegrationTest test
+        run: mvn --batch-mode --no-transfer-progress -Dtest=AuditKafkaIntegrationTest,KafkaSafetyIntegrationTest,AuditStreamLoadTest,KafkaApplicationContextIntegrationTest,AccountingPostgresTest test
       - run: python3 scripts/tests/packaged_smoke.py
       - name: Verify PostgreSQL coordination and pinned edge reload
         run: python3 scripts/tests/isolated_deployment.py

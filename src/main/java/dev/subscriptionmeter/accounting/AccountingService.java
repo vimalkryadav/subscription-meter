@@ -18,10 +18,11 @@ public class AccountingService {
     private static final JsonMapper JSON=JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
+    private final PendingAssessmentQuery pending;
     private final PriceCalculator pricing=new PriceCalculator();
     private final WorkClassifier classifier=new WorkClassifier();
     public AccountingService(JdbcTemplate jdbc) {
-        this.jdbc=jdbc; this.tx=new TransactionTemplate(new DataSourceTransactionManager(Objects.requireNonNull(jdbc.getDataSource())));
+        this.jdbc=jdbc; this.pending=new PendingAssessmentQuery(jdbc); this.tx=new TransactionTemplate(new DataSourceTransactionManager(Objects.requireNonNull(jdbc.getDataSource())));
     }
     public static Map<String,Long> components(Object raw) {
         var result=new LinkedHashMap<String,Long>();
@@ -128,14 +129,7 @@ public class AccountingService {
         r.put("usage_components",encoded);r.put("usage_complete",complete);
     }
     public int projectPending() {
-        var ids=jdbc.queryForList("""
-            SELECT r.id FROM requests r LEFT JOIN request_assessments a ON a.request_id=r.id
-            LEFT JOIN request_details d ON d.request_id=r.id AND d.started_at=(SELECT MAX(latest.started_at) FROM request_details latest WHERE latest.request_id=r.id)
-            WHERE r.state<>'pending' AND (a.request_id IS NULL OR a.source_usage IS DISTINCT FROM r.usage_components
-                OR a.source_complete IS DISTINCT FROM r.usage_complete OR (d.request_id IS NOT NULL AND (a.classifier_version IS DISTINCT FROM ? OR a.source_capture_state IS DISTINCT FROM d.capture_state
-                OR a.source_event_count IS DISTINCT FROM d.event_count OR a.source_detail_started_at IS DISTINCT FROM d.started_at)))
-            ORDER BY r.started_at,r.id LIMIT 25
-            """,String.class,WorkClassifier.VERSION);
+        var ids=pending.nextIds();
         for(String id:ids){
             try{project(id);}catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(getClass()).warn("Accounting record projection delayed ({})",failure.getClass().getSimpleName());}
         }

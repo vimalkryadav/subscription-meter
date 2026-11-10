@@ -104,3 +104,9 @@ Unknown data, auth failures, disk pressure, backup failures, unresolved audit wr
 Install `deploy/control-usage-recovery.service` and `.timer` into `/etc/systemd/system/`, reload systemd, then enable the timer. Gateway capacity maintenance runs independently every five seconds; the hourly job is an additional review. The existing hourly 24-hour history cleanup remains enabled.
 
 Install `deploy/control-usage-backup-capacity.service` and `.timer` alongside the backup units, reload systemd, and enable the capacity timer. Its only public output is the sanitized `deploy/operations/backup-capacity.json` report.
+
+## Accounting reconciliation query
+
+PostgreSQL now selects at most one latest detail row per request with a lateral ordered lookup. The five-second reconciliation interval, 25-item ordering/limit, late-capture refresh rules, manual categories and historical prices remain unchanged. The in-memory H2 development/test backend retains its compatible correlated lookup behind `PendingAssessmentQuery`; PostgreSQL behavior is exercised by the full accounting suite against an isolated database in CI and release checks.
+
+A bounded production read-only comparison in one repeatable-read snapshot returned identical candidate sets (zero differences): the original lookup took 155.083ms and 100,413 shared-buffer hits; the lateral lookup took 23.630ms and 18,246 hits. This is one query sample, not an API p95 or guaranteed speedup. Tests also compare nonempty candidate sets in a single snapshot and cover late details, multiple versions, expiry, changed usage/event counts, pending exclusion and the 25-item limit. No indexes, retention, backfill or live-data migration are needed to roll this query forward or back.
