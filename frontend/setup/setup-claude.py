@@ -38,15 +38,18 @@ $existing = Get-Acl -LiteralPath $path
 if ($existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 21 }
 if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
     $directory = [System.IO.Directory]::Exists($path)
+    $acl = $existing
     if ($directory) {
-        $acl = [System.Security.AccessControl.DirectorySecurity]::new()
         $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
     } else {
-        $acl = [System.Security.AccessControl.FileSecurity]::new()
         $inherit = [System.Security.AccessControl.InheritanceFlags]::None
     }
-    $acl.SetOwner($sid)
+    # Modify only the DACL. Replacing the entire security descriptor can
+    # request audit/SACL privileges that a standard user does not hold.
     $acl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))) {
+        $acl.RemoveAccessRuleSpecific($rule)
+    }
     foreach ($identity in @($sid, [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
         $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', $inherit, 'None', 'Allow')
         $acl.AddAccessRule($rule)
