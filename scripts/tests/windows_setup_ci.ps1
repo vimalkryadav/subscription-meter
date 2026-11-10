@@ -18,6 +18,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot grant checkout read access' }
     $child = @'
 $ErrorActionPreference = 'Stop'
+$env:PSModulePath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules"
 $env:TEMP = '__ROOT__'
 $env:TMP = '__ROOT__'
 Set-Location -LiteralPath '__REPO__'
