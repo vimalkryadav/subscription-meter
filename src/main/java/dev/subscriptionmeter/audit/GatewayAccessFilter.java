@@ -36,6 +36,13 @@ public class GatewayAccessFilter extends OncePerRequestFilter {
                 request.getServletPath(),request.getQueryString(),headers,request.getRemoteAddr(),request.getProtocol());
         request.setAttribute(CONTEXT,context);
         response.setHeader("x-meter-request-id",context.id());
+        if(store.requiresAcknowledgedForwarding()&&!store.ready()) {
+            metrics.counter("meter.audit.admission.rejected").increment();
+            response.setStatus(503);response.setHeader("Retry-After","10");response.setHeader("Cache-Control","no-store");
+            response.setContentType("application/json");
+            response.getWriter().write("{\"error\":{\"type\":\"api_error\",\"message\":\"Audit logging temporarily unavailable. Retry later.\"}}");
+            return; // Storage is unavailable: count rejection in metrics, never fabricate a persisted audit.
+        }
         boolean threw=false;
         try { chain.doFilter(request,response); }
         catch (IOException | ServletException | RuntimeException e) { threw=true; throw e; }

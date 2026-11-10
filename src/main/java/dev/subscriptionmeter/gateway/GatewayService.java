@@ -41,6 +41,7 @@ public class GatewayService {
                         Map<String, String> headers, byte[] body, ResponseSink sink) {
         try (var tracked = deployment.enter(); var permit = limiter.acquire(member)) {
             requireLease();
+            audits.requireReady();
             String id = context.id(), method=context.method(), path=context.path(), query=context.query();
             var protocol=GatewayProtocols.forPath(path);
             long start = System.nanoTime();
@@ -99,6 +100,7 @@ public class GatewayService {
                 if (!responseStarted) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Upstream unavailable");
             } catch (RuntimeException e) {
                 state="gateway_error";
+                if(!responseStarted && e instanceof ResponseStatusException unavailable)status=unavailable.getStatusCode().value();
                 if (capture != null) capture.error(e);
                 throw e;
             } finally {

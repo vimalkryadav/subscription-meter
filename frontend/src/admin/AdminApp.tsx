@@ -1,3 +1,4 @@
+import ConnectionSetup from '../shared/ConnectionSetup';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { ApiError, getSession } from '../shared/api';
 import type { Session } from '../shared/api';
@@ -47,7 +48,7 @@ function Connection() {
   const data = status.data;
   return <><Heading title="Connection" subtitle="Connect a member’s terminal to the gateway."><button disabled={status.loading} onClick={status.refresh}>Refresh status</button></Heading><Notice error>{status.error || members.error}</Notice>
     {members.data && !members.data.some(member => member.active) && <Notice>No active member keys. <a href="#view/members">Create a member key</a> to send requests through the gateway.</Notice>}
-    <Panel title="Claude Code settings"><pre>{'export ANTHROPIC_BASE_URL="' + base + '"\nexport ANTHROPIC_AUTH_TOKEN="<your-member-key>"\nunset ANTHROPIC_API_KEY\nclaude'}</pre><p className="cu-muted">Use the member’s platform key. The upstream credential stays on the server. Captured inputs, outputs, and tool events are available to the administrator, subject to capture limits and retention.</p></Panel>
+    <Panel title="Claude Code settings"><ConnectionSetup gateway={base} /><details><summary>Temporary setup · this terminal only</summary><pre>{'export ANTHROPIC_BASE_URL="' + base + '"\nexport ANTHROPIC_AUTH_TOKEN="<your-member-key>"\nunset ANTHROPIC_API_KEY\nclaude'}</pre><p className="cu-muted">Use the member’s platform key. The upstream credential stays on the server. Captured inputs, outputs, and tool events are available to the administrator, subject to capture limits and retention.</p></details></Panel>
     <Panel title="Gateway status">{data ? <><dl className="cu-coverage"><div><dt>Subscription compatibility</dt><dd>{text(data.subscriptionCompatibility)}</dd></div><div><dt>Upstream credential configured</dt><dd>{data.credentialConfigured ? 'Yes' : 'No'}</dd></div><div><dt>Audit readiness</dt><dd>{data.auditReady ? 'Ready' : 'Not ready'}</dd></div><div><dt>Capture policy</dt><dd>{text(data.capturePolicy)}</dd></div><div><dt>Detail retention</dt><dd>{text(data.detailRetentionDays)} days</dd></div><div><dt>Runtime</dt><dd>Java {text(data.runtime)} · {text(data.thread)} threads</dd></div></dl><details><summary>All status metadata</summary><pre>{pretty(data)}</pre></details></> : <p role="status">Loading gateway status…</p>}</Panel>
   </>;
 }

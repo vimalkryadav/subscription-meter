@@ -15,7 +15,7 @@ public final class KafkaAuditSafetyGuard implements AutoCloseable {
     private final String topic,group;
     private final int partitions;
     private final ScheduledExecutorService probes=Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon(true).factory());
-    private long checkedAt,reserved;
+    private long checkedAt,reserved, measuredAt, logBytes=-1;
     private boolean safe;
     private volatile Reason reason=Reason.WARMING_UP;
     public KafkaAuditSafetyGuard(Admin admin,String topic,String group,int partitions){
@@ -24,6 +24,7 @@ public final class KafkaAuditSafetyGuard implements AutoCloseable {
     }
     public synchronized boolean ready(){return safe&&System.nanoTime()-checkedAt<TimeUnit.SECONDS.toNanos(2);}
     public Reason reason(){return reason;}
+    public synchronized long logBytes(){return System.nanoTime()-measuredAt<TimeUnit.SECONDS.toNanos(2)?logBytes:-1;}
     private static void require(boolean condition,Reason reason){if(!condition)throw new GuardFailure(reason);}
     private static final class GuardFailure extends RuntimeException {final Reason reason;GuardFailure(Reason reason){this.reason=reason;}}
     private synchronized void failed(Reason next){safe=false;if(reason!=next)LOG.warn("Audit admission unavailable: {}",next);reason=next;}
@@ -60,6 +61,7 @@ public final class KafkaAuditSafetyGuard implements AutoCloseable {
                 require(directory.error()==null&&directory.usableBytes().orElse(0)>=MIN_FREE,Reason.DISK_HEADROOM);
                 for(var replica:directory.replicaInfos().values())bytes+=replica.size();
             }
+            synchronized(this){logBytes=bytes;measuredAt=System.nanoTime();}
             // Headroom for two gateway colors and requests already in an acknowledgement window.
             require(bytes<=MAX_LOG-4*BURST_BYTES,Reason.LOG_BUDGET);
             synchronized(this){safe=true;reason=Reason.READY;checkedAt=System.nanoTime();reserved=0;}

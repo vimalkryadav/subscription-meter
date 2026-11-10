@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly control-usage health review and bounded recovery
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=60
+Persistent=true
+Unit=control-usage-recovery.service
+
+[Install]
+WantedBy=timers.target

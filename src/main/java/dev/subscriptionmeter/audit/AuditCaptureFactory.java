@@ -19,6 +19,9 @@ public class AuditCaptureFactory {
             throw new IllegalArgumentException("Audit bounds out of range");
         this.maxBytes=maxBytes; this.maxEvents=maxEvents;
     }
+    public void requireReady() {
+        if(store.requiresAcknowledgedForwarding()&&!store.ready())throw new AuditUnavailableException("Audit admission unavailable");
+    }
     public AuditCapture begin(AuditContext context, String memberId, byte[] body) {
         return new AuditCapture(store, redactor, metrics, context, memberId, mode, body, maxBytes, maxEvents);
     }

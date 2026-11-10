@@ -91,3 +91,11 @@ including Docker-filesystem capacity checks and the in-container dump timeout.
 Both passed with matching snapshot inventories. Rehearsal containers were removed.
 This verifies recovery into an isolated database, not a destructive production
 restore or a whole-workspace disaster recovery exercise.
+
+## Hourly bounded recovery
+
+`control-usage-recovery.timer` runs `scripts/hourly_recovery.py` hourly. It collects fresh checks and writes a sanitized `deploy/operations/recovery.json` report, visible in Operations. It can invoke committed-history pressure cleanup once only when the audit guard reports LOG_BUDGET, the worker is healthy with zero lag, and other checks are healthy (gateway readiness may also fail). The maintenance helper rechecks under the deployment lock. It then rechecks health up to six times, five seconds apart.
+
+Unknown data, auth failures, disk pressure, backup failures, unresolved audit writes and unfinished deployments are reported as `needs_attention`. There are no automatic code edits, arbitrary commands, credential changes, database restores or restart loops. Code changes continue through CI and blue/green release verification. Logs go to the system journal and the dashboard; no external notification channel is configured. This same-workspace scheduler cannot detect total workspace loss from outside.
+
+Install `deploy/control-usage-recovery.service` and `.timer` into `/etc/systemd/system/`, reload systemd, then enable the timer. Gateway capacity maintenance runs independently every five seconds; the hourly job is an additional review. The existing hourly 24-hour history cleanup remains enabled.

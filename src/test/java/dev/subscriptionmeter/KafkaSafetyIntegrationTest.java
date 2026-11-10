@@ -39,7 +39,10 @@ class KafkaSafetyIntegrationTest {
                         producer.send(new ProducerRecord<>(topic,0,"test",new byte[]{2})).get();
                     }
                     admin.alterConsumerGroupOffsets(group,Map.of(partition,new OffsetAndMetadata(1))).all().get();
-                    AuditCommittedPruner.prune(admin,topic,group,Duration.ZERO);
+                    try(var maintenance=new KafkaAuditMaintenance(()->KafkaAuditMaintenance.HIGH_WATER_BYTES,
+                            ()->AuditCommittedPruner.prune(admin,topic,group,Duration.ZERO),new io.micrometer.core.instrument.simple.SimpleMeterRegistry())){
+                        maintenance.check();
+                    }
                     assertThat(admin.listOffsets(Map.of(partition,OffsetSpec.earliest())).all().get().get(partition).offset()).isEqualTo(1);
                     assertThat(admin.listOffsets(Map.of(partition,OffsetSpec.latest())).all().get().get(partition).offset()).isEqualTo(2);
                     await(guard::ready); // unprojected offset 1 survives the explicit prune.
