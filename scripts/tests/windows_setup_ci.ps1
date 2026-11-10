@@ -37,7 +37,11 @@ finally:
     ctypes.windll.kernel32.CloseHandle(token)
 os.environ.update(USERPROFILE=profile.value, APPDATA=str(Path(profile.value)/'AppData/Roaming'),
     LOCALAPPDATA=str(Path(profile.value)/'AppData/Local'), TEMP=str(Path(__file__).parent), TMP=str(Path(__file__).parent))
-os.environ['PSModulePath'] = str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/Modules')
+windows = ctypes.create_unicode_buffer(32768)
+if not ctypes.windll.kernel32.GetWindowsDirectoryW(windows, len(windows)): raise ctypes.WinError()
+os.environ.update(SystemRoot=windows.value, WINDIR=windows.value, COMSPEC=str(Path(windows.value)/'System32/cmd.exe'))
+os.environ['PSModulePath'] = str(Path(windows.value)/'System32/WindowsPowerShell/v1.0/Modules')
+os.environ['PATH'] = str(Path(windows.value)/'System32') + ';' + str(Path(windows.value)/'System32/WindowsPowerShell/v1.0') + ';' + os.path.expandvars(os.environ.get('PATH', ''))
 os.chdir(sys.argv[1])
 for command in ([sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_terminal_setup.py', '-v'],
                 [sys.argv[2], '--test', 'frontend/tests/setup-command.test.mjs']):
