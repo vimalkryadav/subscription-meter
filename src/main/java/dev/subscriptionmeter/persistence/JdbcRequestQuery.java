@@ -60,13 +60,32 @@ public class JdbcRequestQuery implements RequestQuery {
         if(value!=null&&!(value instanceof String s&&s.isBlank())){sql.append(" AND ").append(column).append("=?");args.add(value);}
     }
     public Optional<Map<String,Object>> detail(String id){
-        var rows=jdbc.queryForList("SELECT r.*,m.name,d.request_id AS detail_id,d.request_headers,d.request_body,"
-                +"d.started_at AS capture_started_at,d.query_string,d.peer_address,d.protocol,d.method,d.upstream_mode,d.response_headers,d.response_body,"
+        return readDetail(id,true);
+    }
+    public Optional<Map<String,Object>> summary(String id){
+        return readDetail(id,false);
+    }
+    private Optional<Map<String,Object>> readDetail(String id,boolean includePayload){
+        String payload=includePayload?"d.request_headers,d.request_body,d.response_headers,d.response_body,":"";
+        var rows=jdbc.queryForList("SELECT "+payload+"r.*,m.name,d.request_id AS detail_id,"
+                +"d.started_at AS capture_started_at,d.query_string,d.peer_address,d.protocol,d.method,d.upstream_mode,"
                 +"d.capture_state,d.response_bytes,d.request_bytes,d.captured_bytes,d.event_count,d.truncated,"
                 +"d.upstream_headers_ms,d.first_byte_ms,d.error_type,d.error_message,"+CAPTURE+" AS capture_status"
                 +JOIN+"WHERE r.id=? ORDER BY r.started_at DESC LIMIT 1",
                 Timestamp.from(Instant.now().minus(retentionDays,ChronoUnit.DAYS)),id);
         return rows.stream().findFirst();
+    }
+    public Optional<CaptureContent> content(String id,Instant startedAt,CaptureSection section){
+        // Select only the requested section, pinned to the summary's capture version.
+        String columns=switch(section){
+            case INPUT -> "request_body AS body,NULL AS request_headers,NULL AS response_headers";
+            case OUTPUT -> "response_body AS body,NULL AS request_headers,NULL AS response_headers";
+            case HEADERS -> "NULL AS body,request_headers,response_headers";
+        };
+        return jdbc.query("SELECT "+columns+" FROM request_details WHERE request_id=? AND started_at=?",
+                (rs,row)->new CaptureContent(startedAt,section,rs.getString("body"),
+                        rs.getString("request_headers"),rs.getString("response_headers")),
+                id,Timestamp.from(startedAt)).stream().findFirst();
     }
     public List<Map<String,Object>> events(String id,Instant startedAt,int after,int through,int limit){
         return jdbc.queryForList("SELECT sequence,elapsed_ms,event_type,event_data,truncated,observed_at "

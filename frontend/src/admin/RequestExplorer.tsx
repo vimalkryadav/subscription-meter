@@ -14,6 +14,8 @@ export default function RequestExplorer() {
   const [detail, setDetail] = useState(() => new URLSearchParams(location.search).get('rq_detail') || '');
   const [validation, setValidation] = useState('');
   const [advanced, setAdvanced] = useState(false);
+  const [showUsage, setShowUsage] = useState(false), [showAccess, setShowAccess] = useState(false);
+  const detailTrigger = useRef<HTMLElement | null>(null);
   const advancedCount = Object.entries(draft).filter(([key, value]) => !['days', 'requestId', 'state'].includes(key) && value.trim()).length;
   useEffect(() => {
     const restore = () => {
@@ -24,8 +26,8 @@ export default function RequestExplorer() {
     addEventListener('popstate', restore); return () => removeEventListener('popstate', restore);
   }, []);
   const result = useResource<Page>('/admin/request-search?' + searchParams(applied, window, cursors.at(-1)));
-  const analytics = useResource<{ rows: Row[] }>('/admin/analytics?days=' + applied.days);
-  const access = useResource<Row[]>('/admin/access?days=' + applied.days);
+  const analytics = useResource<{ rows: Row[] }>(showUsage ? '/admin/analytics?days=' + applied.days : null);
+  const access = useResource<Row[]>(showAccess ? '/admin/access?days=' + applied.days : null);
   function field(name: keyof Filters, value: string) { setDraft(current => ({ ...current, [name]: value })); }
   function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -36,8 +38,8 @@ export default function RequestExplorer() {
     try { setWindow(searchWindow(applied)); setCursors(['']); setValidation(''); } catch (failure) { setValidation((failure as Error).message); }
     result.refresh(); analytics.refresh(); access.refresh();
   }
-  function inspect(id: string) { setDetail(id); const url = new URL(location.href); url.searchParams.set('rq_detail', id); history.pushState({}, '', url); }
-  function closeDetail() { setDetail(''); const url = new URL(location.href); url.searchParams.delete('rq_detail'); history.pushState({}, '', url); }
+  function inspect(id: string) { detailTrigger.current = document.activeElement as HTMLElement; setDetail(id); const url = new URL(location.href); url.searchParams.set('rq_detail', id); history.pushState({}, '', url); }
+  function closeDetail() { setDetail(''); detailTrigger.current?.focus(); const url = new URL(location.href); url.searchParams.delete('rq_detail'); history.pushState({}, '', url); }
   const inputFields: { key: keyof Filters; label: string; type?: string; max?: number; min?: number; length?: number }[] = [
     { key: 'upstreamAccount', label: 'Upstream account', length: 80 }, { key: 'clientFamily', label: 'Client family', length: 100 },
     { key: 'keyPrefix', label: 'Member key prefix', length: 16 }, { key: 'memberId', label: 'Member ID', length: 36 },
@@ -54,7 +56,8 @@ export default function RequestExplorer() {
           <Select label={draft.from || draft.to ? 'Window · custom dates' : 'Activity window'} value={draft.days} onChange={value => setDraft(current => presetWindow(current, value))} items={[{ value: '1', label: 'Last 24 hours' }, { value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }]} />
           <Select label="Request outcome" value={draft.state} onChange={value => field('state', value)} items={[{ value: '', label: 'All outcomes' }, ...options(['complete', 'pending', 'partial', 'disconnected', 'stream_error', 'upstream_error', 'gateway_error', 'interrupted'])]} />
         </div>
-        <div className="cu-bar cu-search-actions"><div><button className="cu-primary" type="submit">Search requests</button><button type="button" onClick={() => persistFilters(emptyFilters())}>Clear</button></div><button type="button" aria-expanded={advanced} aria-controls="advanced-request-filters" onClick={() => setAdvanced(value => !value)}>Advanced filters{advancedCount ? ` (${advancedCount})` : ''} <span aria-hidden="true">{advanced ? '−' : '+'}</span></button></div>
+        <div className="cu-bar cu-search-actions"><div><button className="cu-primary" type="submit">Search requests</button><button type="button" disabled={!/^[A-Za-z0-9_-]{1,36}$/.test(draft.requestId.trim())} onClick={() => inspect(draft.requestId.trim())}>Open ID directly</button><button type="button" onClick={() => persistFilters(emptyFilters())}>Clear</button></div><button type="button" aria-expanded={advanced} aria-controls="advanced-request-filters" onClick={() => setAdvanced(value => !value)}>Advanced filters{advancedCount ? ` (${advancedCount})` : ''} <span aria-hidden="true">{advanced ? '−' : '+'}</span></button></div>
+        <p className="cu-muted">Search uses the selected dates and filters. Open ID directly looks up one request across all remaining metadata, independently of those filters.</p>
         {advanced && <div id="advanced-request-filters" className="cu-advanced-filters"><div className="cu-filter-grid">
           <Select label="Provider" value={draft.provider} onChange={value => field('provider', value)} items={providers} />
           <Select label="Model family" value={draft.modelFamily} onChange={value => field('modelFamily', value)} items={[{ value: '', label: 'All model families' }, { value: 'fable', label: 'Fable only' }]} />
@@ -71,31 +74,41 @@ export default function RequestExplorer() {
       <div className="cu-bar"><button disabled={result.loading || cursors.length === 1} onClick={() => setCursors(current => current.slice(0, -1))}>Previous</button><button disabled={result.loading || !result.data?.nextCursor} onClick={() => { if (result.data?.nextCursor) setCursors(current => [...current, result.data!.nextCursor!]); }}>Next</button><span>Page {cursors.length} · {result.data?.items.length || 0} requests</span></div>
     </Panel>
     {detail && <RequestDetail key={detail} id={detail} onClose={closeDetail} />}
-    <Panel title="Usage by member"><p className="cu-muted">Last {applied.days} days. These aggregates use the activity window, independently of the detailed search filters.</p><Notice error>{analytics.error}</Notice><Table headings={['Member / model', 'State', 'Requests', 'Input', 'Output', 'Cache write', 'Cache read']} empty={!analytics.loading && !analytics.data?.rows.length}>{analytics.data?.rows.map((row, i) => <tr key={i}><td>{text(row.name)} / {text(row.model)}</td><td>{text(row.state)}</td>{['requests', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].map(key => <td key={key}>{count(row[key])}</td>)}</tr>)}</Table></Panel>
-    <Panel title="Gateway access"><p className="cu-muted">Latest 50 attempts in the last {applied.days} days, including rejected requests. Rejected bodies are not captured.</p><Notice error>{access.error}</Notice><Table headings={['Time', 'Request ID', 'Method / path', 'Status', 'Duration']} empty={!access.loading && !access.data?.length}>{access.data?.map((row, i) => <tr key={i}><td>{date(row.started_at)}</td><td>{text(row.request_id)}</td><td>{text(row.method)} {text(row.path)}</td><td>{text(row.status_code)}</td><td>{duration(row.duration_ms)}</td></tr>)}</Table></Panel>
+    <div className="cu-bar"><button aria-expanded={showUsage} aria-controls="request-usage" onClick={() => setShowUsage(value => !value)}>{showUsage ? 'Hide' : 'Show'} recent member usage</button><button aria-expanded={showAccess} aria-controls="request-access" onClick={() => setShowAccess(value => !value)}>{showAccess ? 'Hide' : 'Show'} recent gateway access</button></div>
+    {showUsage && <div id="request-usage"><Panel title="Usage by member"><p className="cu-muted">Last {applied.days} days. These recent aggregates are independent of custom search dates and all detailed filters.</p><Notice error>{analytics.error}</Notice><Table headings={['Member / model', 'State', 'Requests', 'Input', 'Output', 'Cache write', 'Cache read']} empty={!analytics.loading && !analytics.data?.rows.length}>{analytics.data?.rows.map((row, i) => <tr key={i}><td>{text(row.name)} / {text(row.model)}</td><td>{text(row.state)}</td>{['requests', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].map(key => <td key={key}>{count(row[key])}</td>)}</tr>)}</Table></Panel></div>}
+    {showAccess && <div id="request-access"><Panel title="Gateway access"><p className="cu-muted">Latest 50 attempts in the last {applied.days} days, including rejected requests. Independent of custom search dates and detailed filters. Rejected bodies are not captured.</p><Notice error>{access.error}</Notice><Table headings={['Time', 'Request ID', 'Method / path', 'Status', 'Duration']} empty={!access.loading && !access.data?.length}>{access.data?.map((row, i) => <tr key={i}><td>{date(row.started_at)}</td><td>{row.request_id ? <button onClick={() => inspect(text(row.request_id))}>{text(row.request_id)}</button> : '—'}</td><td>{text(row.method)} {text(row.path)}</td><td>{text(row.status_code)}</td><td>{duration(row.duration_ms)}</td></tr>)}</Table></Panel></div>}
   </>;
 }
 
 function RequestDetail({ id, onClose }: { id: string; onClose: () => void }) {
-  const request = useResource<Row>('/admin/request-search/' + encodeURIComponent(id));
+  const request = useResource<Row>('/admin/request-search/' + encodeURIComponent(id) + '/summary');
   const [tab, setTab] = useState('summary');
   const [revision, setRevision] = useState(0), section = useRef<HTMLElement>(null);
   useEffect(() => { section.current?.focus(); }, [id]);
   const tabs = ['summary', 'input', 'output', 'events', 'headers', 'value'];
   const data = request.data;
-  const metadata = data ? Object.fromEntries(Object.entries(data).filter(([key]) => !['request_body', 'response_body', 'request_headers', 'response_headers'].includes(key))) : null;
   return <section className="cu-panel" ref={section} tabIndex={-1} aria-busy={request.loading} aria-label={'Request detail ' + id}><div className="cu-bar"><h2>Request detail</h2><button onClick={() => { request.refresh(); setRevision(value => value + 1); }} disabled={request.loading}>Refresh detail</button>{data && <a className="cu-button" href={'/admin/requests/' + encodeURIComponent(id) + '/export'} download={'request-' + id + '.json'}>Download JSON</a>}<button onClick={onClose}>Close detail</button></div>
     <p className="cu-mono">{id}</p><Notice error>{request.error}</Notice><Notice>{request.loading ? 'Loading request…' : captureMessages[String(data?.capture_status)] || 'Capture status unavailable'}</Notice>
     <Segments label="Request detail sections" values={tabs.map(value => ({ value, label: value === 'value' ? 'Usage & category' : value[0].toUpperCase() + value.slice(1) }))} value={tab} onChange={setTab} />
     {data && <>
-      {tab === 'summary' && <pre>{pretty(metadata)}</pre>}
-      {tab === 'input' && <pre>{pretty(data.request_body)}</pre>}
-      {tab === 'output' && <pre>{data.response_body === '' ? 'Streaming response: inspect Events.' : pretty(data.response_body)}</pre>}
-      {tab === 'headers' && <pre>{'REQUEST\n' + pretty(data.request_headers) + '\n\nRESPONSE\n' + pretty(data.response_headers)}</pre>}
+      {tab === 'summary' && <pre>{pretty(data)}</pre>}
+      {['input', 'output', 'headers'].includes(tab) && <CaptureContent key={revision + ':' + tab} id={id} section={tab} startedAt={data.capture_version} />}
       {tab === 'events' && <Events key={revision} id={id} eventCount={data.event_count} />}
       {tab === 'value' && <RequestValue key={revision} id={id} />}
     </>}
   </section>;
+}
+function CaptureContent({ id, section, startedAt }: { id: string; section: string; startedAt: unknown }) {
+  const capturedAt = typeof startedAt === 'string' && Number.isFinite(Date.parse(startedAt)) ? startedAt : null;
+  const resource = useResource<{ body: string | null; requestHeaders: string | null; responseHeaders: string | null }>(capturedAt
+    ? '/admin/request-search/' + encodeURIComponent(id) + '/content?' + new URLSearchParams({ startedAt: capturedAt, section }) : null);
+  return <div aria-busy={resource.loading}>
+    <Notice error>{resource.error}</Notice>
+    {!capturedAt ? <Notice>No retained capture version is available. Refresh the summary if capture is still pending.</Notice> : resource.loading ? <p role="status">Loading {section}…</p> : resource.data && <pre>{section === 'headers'
+      ? 'REQUEST\n' + pretty(resource.data.requestHeaders) + '\n\nRESPONSE\n' + pretty(resource.data.responseHeaders)
+      : section === 'output' && resource.data.body === '' ? 'Streaming response: inspect Events.' : pretty(resource.data.body)}</pre>}
+    {resource.error && <p className="cu-muted">This capture may have expired or changed. Refresh detail to load its current summary.</p>}
+  </div>;
 }
 function Events({ id, eventCount }: { id: string; eventCount: unknown }) {
   const [pages, setPages] = useState([0]);

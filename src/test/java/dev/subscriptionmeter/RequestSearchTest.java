@@ -18,10 +18,13 @@ class RequestSearchTest {
     JdbcTemplate jdbc; RequestSearchController controller;
     final Instant time=Instant.now().minusSeconds(3600);
     @BeforeEach void setup(){
-        var ds=new DriverManagerDataSource("jdbc:h2:mem:search-"+UUID.randomUUID()+";MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE","sa","");
+        var ds=dataSource();
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql"),new ClassPathResource("accounting-schema.sql")).execute(ds);jdbc=new JdbcTemplate(ds);
         jdbc.update("INSERT INTO members(id,name,key_hash,key_prefix,rpm,concurrency_limit) VALUES('member','Example','hash','prefix',60,4)");
         controller=new RequestSearchController(new JdbcRequestQuery(jdbc,30));
+    }
+    DriverManagerDataSource dataSource(){
+        return new DriverManagerDataSource("jdbc:h2:mem:search-"+UUID.randomUUID()+";MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE","sa","");
     }
     void request(String id,Instant started,String model){jdbc.update("INSERT INTO requests(id,member_id,started_at,path,model,state,status_code,duration_ms,upstream_request_id,usage_seen) VALUES(?,'member',?,'/v1/messages',?,'complete',200,120,'provider-id',TRUE)",id,Timestamp.from(started),model);}
     dev.subscriptionmeter.domain.RequestQuery.Page page(String cursor,int limit,String model){return page(cursor,limit,model,"");}
@@ -86,5 +89,38 @@ class RequestSearchTest {
         assertThat(query.detail("provider-error").orElseThrow().get("capture_status")).isEqualTo("truncated");
         jdbc.update("UPDATE request_details SET truncated=FALSE,capture_state='pending' WHERE request_id='provider-error'");
         assertThat(query.detail("provider-error").orElseThrow().get("capture_status")).isEqualTo("pending");
+    }
+
+    @Test void summaryOmitsPayloadAndLazySectionsPinAnExactCaptureVersion() {
+        request("lazy",time.minusSeconds(60L*86400),"model");
+        Instant first=Instant.parse("2026-11-01T00:00:00.123456Z"),second=first.plusSeconds(1);
+        for(Instant capture:List.of(first,second))
+            jdbc.update("INSERT INTO request_details(request_id,started_at,member_id,upstream_mode,method,path,request_body,response_body,request_headers,response_headers,capture_state) VALUES('lazy',?,'member','subscription','POST','/v1/messages',?,?,?,?,'complete')",
+                    Timestamp.from(capture),capture.equals(first)?"earlier input":"latest input","output","request headers","response headers");
+        var response=new MockHttpServletResponse();
+        var summary=controller.summary("lazy",response);
+        assertThat(summary).doesNotContainKeys("request_body","response_body","request_headers","response_headers");
+        assertThat(summary.get("capture_version")).isEqualTo(second.toString());
+        assertThat(summary.get("capture_status")).isEqualTo("available");
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+        var input=controller.content("lazy",first,"input",new MockHttpServletResponse());
+        assertThat(input.body()).isEqualTo("earlier input");
+        assertThat(input.requestHeaders()).isNull();assertThat(input.responseHeaders()).isNull();
+        assertThat(controller.content("lazy",second,"output",new MockHttpServletResponse()).body()).isEqualTo("output");
+        var headers=controller.content("lazy",second,"headers",new MockHttpServletResponse());
+        assertThat(headers.body()).isNull();assertThat(headers.requestHeaders()).isEqualTo("request headers");
+        assertThat(headers.responseHeaders()).isEqualTo("response headers");
+        assertThatThrownBy(()->controller.content("lazy",first,"request_body FROM members",new MockHttpServletResponse())).hasMessageContaining("400");
+        // Retention between summary and tab selection must not silently switch captures.
+        jdbc.update("DELETE FROM request_details WHERE request_id='lazy' AND started_at=?",Timestamp.from(first));
+        assertThatThrownBy(()->controller.content("lazy",first,"input",new MockHttpServletResponse())).hasMessageContaining("404");
+        assertThat(controller.content("lazy",second,"input",new MockHttpServletResponse()).body()).isEqualTo("latest input");
+    }
+    @Test void summaryQueryNeverSelectsBodyOrHeaderColumns() {
+        var spy=org.mockito.Mockito.spy(jdbc);
+        new JdbcRequestQuery(spy,30).summary("absent");
+        var sql=org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(spy).queryForList(sql.capture(),org.mockito.ArgumentMatchers.any(Timestamp.class),org.mockito.ArgumentMatchers.eq("absent"));
+        assertThat(sql.getValue()).doesNotContain("request_body","response_body","request_headers","response_headers");
     }
 }

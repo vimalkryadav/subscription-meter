@@ -39,10 +39,10 @@ class RequestSearchAuthorizationTest {
         jdbc.update("UPDATE portal_accounts SET role='admin' WHERE id=?",owner.id());
         var mvc=MockMvcBuilders.webAppContextSetup(context).addFilters(adminFilter).build();
         try{
-            for(String path:List.of("/admin/request-search","/admin/request-search/missing","/admin/requests/missing/export")){
-                assertThat(mvc.perform(get(path).servletPath(path)).andReturn().getResponse().getStatus()).isEqualTo(401);
-                assertThat(mvc.perform(get(path).servletPath(path).cookie(memberCookie)).andReturn().getResponse().getStatus()).isEqualTo(403);
-                assertThat(mvc.perform(get(path).servletPath(path).cookie(ownerCookie)).andReturn().getResponse().getStatus()).isEqualTo(path.equals("/admin/request-search")?200:404);
+            for(String path:List.of("/admin/request-search","/admin/request-search/missing","/admin/request-search/missing/summary","/admin/request-search/missing/content?section=input&startedAt=2026-11-10T00:00:00Z","/admin/requests/missing/export")){
+                assertThat(mvc.perform(get(path).servletPath(path.split("\\?",2)[0])).andReturn().getResponse().getStatus()).isEqualTo(401);
+                assertThat(mvc.perform(get(path).servletPath(path.split("\\?",2)[0]).cookie(memberCookie)).andReturn().getResponse().getStatus()).isEqualTo(403);
+                assertThat(mvc.perform(get(path).servletPath(path.split("\\?",2)[0]).cookie(ownerCookie)).andReturn().getResponse().getStatus()).isEqualTo(path.equals("/admin/request-search")?200:404);
             }
             sessions.logout(ownerCookie.getValue());
             assertThat(mvc.perform(get("/admin/request-search").servletPath("/admin/request-search").cookie(ownerCookie)).andReturn().getResponse().getStatus()).isEqualTo(401);
@@ -73,7 +73,7 @@ class RequestSearchAuthorizationTest {
             assertThat(mvc.perform(patch(classification).servletPath(classification).cookie(cookie).contentType("application/json").content("{\"category\":\"testing\"}")).andReturn().getResponse().getStatus()).isEqualTo(403);
             assertThat(mvc.perform(patch(classification).servletPath(classification).cookie(cookie).header("X-Portal-Request","1").header("X-CSRF-Token",PortalTokens.csrf(ownerToken)).contentType("application/json").content("{\"category\":\"testing\"}")).andReturn().getResponse().getStatus()).isEqualTo(200);
             String path="/admin/accounts/"+user.id()+"/sessions";
-            var response=mvc.perform(get(path).servletPath(path).cookie(cookie)).andReturn().getResponse();
+            var response=mvc.perform(get(path).servletPath(path.split("\\?",2)[0]).cookie(cookie)).andReturn().getResponse();
             assertThat(response.getStatus()).isEqualTo(200);
             assertThat(response.getContentAsString()).doesNotContain(userToken,userHash,"token_hash","password_hash");
             String ref=JsonMapper.builder().build().readTree(response.getContentAsString()).get(0).path("sessionRef").asString();
