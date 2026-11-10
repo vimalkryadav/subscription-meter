@@ -73,6 +73,22 @@ public class RequestSearchController {
     @GetMapping("/request-search/{id}") public Map<String,Object> detail(@PathVariable String id,HttpServletResponse response){
         response.setHeader("Cache-Control","no-store");return query.detail(id).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
+    @GetMapping("/request-search/{id}/summary") public Map<String,Object> summary(@PathVariable String id,HttpServletResponse response){
+        response.setHeader("Cache-Control","no-store");
+        var summary=new LinkedHashMap<>(query.summary(id).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND)));
+        // Preserve database timestamp precision through browsers (Date truncates to milliseconds).
+        Object capture=summary.get("capture_started_at");
+        summary.put("capture_version",capture==null?null:instant(capture).toString());
+        return summary;
+    }
+    @GetMapping("/request-search/{id}/content") public CaptureContent content(@PathVariable String id,
+            @RequestParam Instant startedAt,@RequestParam String section,HttpServletResponse response){
+        response.setHeader("Cache-Control","no-store");
+        CaptureSection selected;
+        try{selected=CaptureSection.valueOf(section.toUpperCase(Locale.ROOT));}
+        catch(IllegalArgumentException e){throw bad("Invalid capture section");}
+        return query.content(id,startedAt,selected).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));
+    }
 
     /** Page events directly to the response; never accumulate the entire export in browser/server memory. */
     @GetMapping("/requests/{id}/export") public void export(@PathVariable String id,HttpServletResponse response) throws IOException {

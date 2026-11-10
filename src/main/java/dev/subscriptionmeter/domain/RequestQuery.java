@@ -14,7 +14,12 @@ public interface RequestQuery {
     record Position(Instant startedAt, String id) {}
     record Page(List<Map<String,Object>> items, String nextCursor, Instant asOf,
                 Instant from, Instant to, Instant generatedAt) {}
+    enum CaptureSection { INPUT, OUTPUT, HEADERS }
+    record CaptureContent(Instant startedAt, CaptureSection section, String body,
+                          String requestHeaders, String responseHeaders) {}
     List<Map<String,Object>> search(Filter filter, Position before, int limit);
+    Optional<Map<String,Object>> summary(String id);
+    Optional<CaptureContent> content(String id, Instant startedAt, CaptureSection section);
     Optional<Map<String,Object>> detail(String id);
     List<Map<String,Object>> events(String id, Instant startedAt, int after, int through, int limit);
 }

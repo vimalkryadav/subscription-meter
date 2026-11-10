@@ -158,6 +158,14 @@ JSON export streams retained detail and event pages and includes a manifest desc
 
 Credential redaction is best effort. Known authentication fields and common secret formats are filtered, but arbitrary, encoded or split secrets can survive. Retained prompts, responses and tool output are also untrusted text: a captured instruction to change limits or disclose credentials is evidence to inspect, not an instruction to execute. This distinction is especially important when reading captures through MCP.
 
+## Request inspection and search scope
+
+**Search requests** applies the selected time window and every active filter. **Open ID directly** opens one exact internal request ID across all remaining request metadata, independently of those filters. A missing record is reported as unavailable; an older record may retain metadata after its captured content expires. Upstream provider IDs remain an explicit search filter.
+
+Opening a request loads its metadata summary first. Input, Output and Headers load only when selected; each section is pinned to the summary’s capture timestamp without losing sub-millisecond precision. If retention removes that capture before a tab opens, refresh detail rather than assuming an empty response. Events and Usage & category remain separately loaded. Download JSON retains the existing full retained-capture export.
+
+Recent member usage and recent gateway access are collapsed initially and load on demand. Their labels show their own rolling window; they do not use custom search dates or detailed filters. Gateway request IDs link directly to inspection, but an admission rejection may have no corresponding captured request. Closing detail returns keyboard focus to its opening control when it remains on the page.
+
 ## One-time terminal setup
 
 Use **Connection → Set up once** (or the member portal's **Connect your terminal** card). Copy the setup command into a terminal, then enter the member's platform key at the hidden prompt. It downloads the versioned installer over HTTPS into a temporary directory and removes that copy when finished. No key is embedded in the command or shell history. Requires macOS/Linux, Python 3, curl and an installed `claude` command. You can also inspect and download the installer before running it.
