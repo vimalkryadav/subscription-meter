@@ -16,8 +16,11 @@ import static org.assertj.core.api.Assertions.*;
 class AccountingTest {
     JdbcTemplate jdbc;AccountingService service;
     Instant from=Instant.parse("2026-11-04T00:00:00Z"),to=from.plusSeconds(3600);
+    DriverManagerDataSource dataSource(){
+        return new DriverManagerDataSource("jdbc:h2:mem:account"+UUID.randomUUID()+";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1","sa","");
+    }
     @BeforeEach void setup(){
-        var ds=new DriverManagerDataSource("jdbc:h2:mem:account"+UUID.randomUUID()+";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1","sa","");
+        var ds=dataSource();
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql"),new ClassPathResource("accounting-schema.sql")).execute(ds);
         jdbc=new JdbcTemplate(ds);service=new AccountingService(jdbc);
         jdbc.update("INSERT INTO members(id,name,key_hash,key_prefix,rpm,concurrency_limit) VALUES('alice','Alice','hash-a','sm_a',60,4),('bob','Bob','hash-b','sm_b',60,4)");
@@ -135,6 +138,43 @@ class AccountingTest {
         assertThat(jdbc.queryForObject("SELECT usage_complete FROM requests WHERE id='history'",Boolean.class)).isTrue();
         assertThat(service.detail("history").get("estimate").toString()).contains("status=complete");
         assertThat(service.projectPending()).isZero();
+    }
+    @Test void latestDetailWinsWithoutRevisitingOlderVersions(){
+        request("versions","alice","{}",false);service.project("versions");service.classify("versions","review","owner");
+        jdbc.update("INSERT INTO request_details(request_id,started_at,member_id,upstream_mode,method,path,request_body,capture_state,event_count) VALUES('versions',?,'alice','subscription','POST','/v1/messages',?,'complete',2)",Timestamp.from(from.plusSeconds(2)),"{\"messages\":[{\"role\":\"user\",\"content\":\"debug this crash\"}]}");
+        assertThat(service.projectPending()).isEqualTo(1);
+        assertThat(service.detail("versions").get("classification").toString()).contains("category=review","admin_override");
+        jdbc.update("UPDATE request_details SET event_count=100 WHERE request_id='versions' AND started_at=?",Timestamp.from(from.plusSeconds(1)));
+        assertThat(service.projectPending()).isZero();
+        jdbc.update("DELETE FROM request_details WHERE request_id='versions' AND started_at=?",Timestamp.from(from.plusSeconds(2)));
+        assertThat(service.projectPending()).isEqualTo(1);assertThat(service.projectPending()).isZero();
+    }
+    @Test void candidateLimitOrderAndPendingExclusionRemainStable(){
+        for(int n=0;n<30;n++)request(String.format("batch-%02d",n),"alice","{}",false);
+        jdbc.update("UPDATE requests SET state='pending' WHERE id='batch-00'");
+        var candidates=new PendingAssessmentQuery(jdbc).nextIds();
+        assertThat(candidates).hasSize(25).startsWith("batch-01","batch-02").endsWith("batch-25");
+        assertThat(service.projectPending()).isEqualTo(25);assertThat(service.projectPending()).isEqualTo(4);assertThat(service.projectPending()).isZero();
+    }
+    @Test void optimizedCandidatesMatchPreviousQueryInOneSnapshot(){
+        for(int n=0;n<30;n++)request(String.format("compare-%02d",n),"alice","{}",false);
+        service.project("compare-00");service.classify("compare-00","review","owner");
+        jdbc.update("UPDATE requests SET state='pending' WHERE id='compare-01'");
+        jdbc.update("DELETE FROM request_details WHERE request_id='compare-02'");
+        jdbc.update("INSERT INTO request_details(request_id,started_at,member_id,upstream_mode,method,path,capture_state,event_count) VALUES('compare-00',?,'alice','subscription','POST','/v1/messages','pending',2)",Timestamp.from(from.plusSeconds(2)));
+        var tx=new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()));
+        tx.setReadOnly(true);tx.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        tx.executeWithoutResult(status->{
+            var old=jdbc.queryForList("""
+                SELECT r.id FROM requests r LEFT JOIN request_assessments a ON a.request_id=r.id
+                LEFT JOIN request_details d ON d.request_id=r.id AND d.started_at=(SELECT MAX(latest.started_at) FROM request_details latest WHERE latest.request_id=r.id)
+                WHERE r.state<>'pending' AND (a.request_id IS NULL OR a.source_usage IS DISTINCT FROM r.usage_components
+                    OR a.source_complete IS DISTINCT FROM r.usage_complete OR (d.request_id IS NOT NULL AND (a.classifier_version IS DISTINCT FROM ? OR a.source_capture_state IS DISTINCT FROM d.capture_state
+                    OR a.source_event_count IS DISTINCT FROM d.event_count OR a.source_detail_started_at IS DISTINCT FROM d.started_at)))
+                ORDER BY r.started_at,r.id LIMIT 25
+                """,String.class,WorkClassifier.VERSION);
+            assertThat(new PendingAssessmentQuery(jdbc).nextIds()).containsExactlyElementsOf(old).hasSize(25);
+        });
     }
     private void event(String id,int sequence,String type,String data){
         jdbc.update("INSERT INTO request_events(request_id,request_started_at,observed_at,sequence,elapsed_ms,event_type,event_data) VALUES(?,?,?,?,1,?,?)",id,Timestamp.from(from.plusSeconds(1)),Timestamp.from(from.plusSeconds(sequence)),sequence,type,data);
