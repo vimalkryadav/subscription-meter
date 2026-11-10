@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 $path = $env:CONTROL_USAGE_ACL_PATH
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $existing = Get-Acl -LiteralPath $path
-if ($existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'owner' }
+if ($existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 21 }
 if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
     $directory = [System.IO.Directory]::Exists($path)
     if ($directory) {
@@ -66,6 +66,10 @@ if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
                             'CONTROL_USAGE_ACL_PRIVATE': '1' if private else '0'},
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=30, check=True)
+    except subprocess.CalledProcessError as error:
+        if error.returncode == 21:
+            raise ValueError('Setup files must be owned by your Windows user. Run in a normal, non-administrator terminal.') from None
+        raise ValueError('Could not apply private Windows file permissions (code '+str(error.returncode)+').') from None
     except (OSError, subprocess.SubprocessError):
         raise ValueError('Could not verify private Windows file permissions. Use a local directory owned by your user.') from None
 
