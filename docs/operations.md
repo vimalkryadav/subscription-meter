@@ -39,11 +39,14 @@ successfully restore-tested archive are retained. This can retain captured data
 beyond its active-database retention period; do not treat database chunk deletion
 as deletion from backups. A failed restore preserves the previous verified copy.
 
-Storage limits fail closed: 512 MiB per archive, 4 GiB total archive-directory
-budget, source database at most 2 GiB, and at least 4 GiB free filesystem space
+Storage limits fail closed and are validated together in `deploy/backup-budget.json`: 2 GiB per archive, 20 GiB total archive-directory
+budget, source database at most 8 GiB, and at least 4 GiB free filesystem space
 with additional room based on database size. Crossing a limit produces an alert;
-it does not delete unverified or unrelated operator files to make room. Increase
-these reviewed limits before sustained volume outgrows this prototype.
+it does not delete unverified or unrelated operator files to make room. The store must fit seven retained archives, an older protected verified copy, and a pending archive plus metadata overhead. Review these coupled limits before sustained volume outgrows them. The restore drill remains limited to 768 MiB and half a CPU; a larger bound does not prove every possible archive at that bound has been rehearsed.
+
+A separate `control-usage-backup-capacity.timer` collects size-only database, archive, store and restore-filesystem observations every minute. It does not dump, restore or prune. Operations shows fixed ceilings, next-archive reservation, source timestamps and remaining space; the monitor warns at 80% usage or insufficient reserve. Archive size is the last completed archive, not a prediction. Reports older than three minutes are unknown. The health monitor itself retains its restricted permissions.
+
+New backups use inventory version 2, covering audit operations/parts, pricing, administrator actions, schema fingerprint, coordination and authentication tables in the same snapshot. Restore selects the inventory version recorded in the manifest; older archives without a version still use the original inventory. A matching snapshot includes incomplete operations as they existed, without claiming unprojected Kafka records are in the dump.
 
 A restore drill validates the checksum, starts the recorded local image with no
 network, no published ports and no live volumes, uses Timescale's pre/post-restore
@@ -99,3 +102,5 @@ restore or a whole-workspace disaster recovery exercise.
 Unknown data, auth failures, disk pressure, backup failures, unresolved audit writes and unfinished deployments are reported as `needs_attention`. There are no automatic code edits, arbitrary commands, credential changes, database restores or restart loops. Code changes continue through CI and blue/green release verification. Logs go to the system journal and the dashboard; no external notification channel is configured. This same-workspace scheduler cannot detect total workspace loss from outside.
 
 Install `deploy/control-usage-recovery.service` and `.timer` into `/etc/systemd/system/`, reload systemd, then enable the timer. Gateway capacity maintenance runs independently every five seconds; the hourly job is an additional review. The existing hourly 24-hour history cleanup remains enabled.
+
+Install `deploy/control-usage-backup-capacity.service` and `.timer` alongside the backup units, reload systemd, and enable the capacity timer. Its only public output is the sanitized `deploy/operations/backup-capacity.json` report.

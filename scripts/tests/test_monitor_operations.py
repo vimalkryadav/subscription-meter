@@ -87,4 +87,12 @@ class MonitorTests(unittest.TestCase):
             scrape=next(q for q in queries if q.startswith('max(up'))
             self.assertEqual('instance="app-green:8180"' in scrape,phase=='stable')
 
+    def test_capacity_warning_and_stale_observations_need_attention(self):
+        now=1800000000
+        data={'generatedAt':dt.datetime.fromtimestamp(now,dt.timezone.utc).isoformat(),'status':'warning'}
+        self.assertEqual(m.capacity_check(data,now)[0],'failed')
+        data['status']='ok';self.assertEqual(m.capacity_check(data,now)[0],'ok')
+        self.assertEqual(m.capacity_check(data,now+181)[0],'unknown')
+        data['status']='unknown';self.assertEqual(m.capacity_check(data,now)[0],'unknown')
+
 if __name__=='__main__':unittest.main()

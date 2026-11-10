@@ -13,17 +13,27 @@ const explanations: Record<string, string> = {
   upstream_auth: 'Observed 401/403 responses in the last ten minutes. No test inference is sent.',
   disk: 'Requires at least 10 GiB and 10% free on the workspace filesystem.',
   backup: 'Successful backup within 30 hours; a failed latest attempt needs attention.',
+  backup_capacity: 'Warns before archive, database, store or restore-space budgets are exhausted.',
   restore: 'Successful isolated restore rehearsal within eight days; a failed latest attempt needs attention.',
 };
 export default function Operations() {
   const resource = useResource<Report>('/admin/operations');
   const recovery = useResource<{generatedAt:string|null;status:string;action:string;failedChecks:string[];stale:boolean}>('/admin/recovery');
-  const refresh = useRef(resource.refresh); refresh.current = resource.refresh;
+  const capacity = useResource<{generatedAt:string|null;archiveObservedAt:string|null;status:string;stale:boolean;rows:{id:string;usedBytes:number;limitBytes:number;reserveBytes:number;remainingBytes:number;state:string}[]}>('/admin/backup-capacity');
+  const refresh = useRef(resource.refresh); refresh.current = () => {resource.refresh();capacity.refresh();};
   useEffect(() => { const interval = setInterval(() => refresh.current(), 60_000); return () => clearInterval(interval); }, []);
   const data = resource.data;
   const stale = !!data && (data.stale || !data.generatedAt || Date.now() - Date.parse(data.generatedAt) > 180_000);
   return <><Heading title="Operations" subtitle="Local service health, audit processing, and recovery readiness."><button disabled={resource.loading} onClick={resource.refresh}>Refresh health</button></Heading>
     <Notice error>{resource.error}</Notice>
+    <Panel title="Backup and restore capacity">
+      <Notice error>{capacity.error}</Notice>
+      <p>Collected: {date(capacity.data?.generatedAt)}. Archive size is from the last completed backup: {date(capacity.data?.archiveObservedAt)}; it is not a prediction of the next dump.</p>
+      <Notice error={capacity.data?.stale || capacity.data?.status !== 'ok'}>{!capacity.data || capacity.data.stale || (capacity.data.generatedAt && Date.now()-Date.parse(capacity.data.generatedAt)>180_000) ? 'Capacity observations unavailable or stale.' : capacity.data.status === 'ok' ? 'Current observations have budget headroom.' : 'Capacity needs attention before the next backup or restore.'}</Notice>
+      <div className="cu-table-scroll" role="region" aria-label="Backup capacity table" tabIndex={0}><table className="cu-capacity-table"><thead><tr><th>Budget</th><th>Observed / required</th><th>Ceiling / available</th><th>Reserved for next archive</th><th>Remaining</th></tr></thead><tbody>{capacity.data?.rows.map(row=><tr key={row.id}><td>{({archive:'Last archive',database:'Source database',store:'Backup store',backup_free:'Backup filesystem restore space',docker_free:'Docker filesystem restore space'} as Record<string,string>)[row.id]}</td><td>{(row.usedBytes/1048576).toFixed(1)} MiB</td><td>{(row.limitBytes/1048576).toFixed(1)} MiB</td><td>{(row.reserveBytes/1048576).toFixed(1)} MiB</td><td>{(row.remainingBytes/1048576).toFixed(1)} MiB</td></tr>)}</tbody></table></div>
+      <p>Filesystem rows compare required restore reserve with available free space. Capacity warnings use the configured policy threshold. Retention remains seven completed archives plus the protected verified copy.</p>
+      <button onClick={capacity.refresh} disabled={capacity.loading}>Refresh capacity</button>
+    </Panel>
     <StreamProbe />
     <Panel title="Hourly health review">
       <p>Automatic recovery is limited to reclaiming already-processed Kafka history when a verified capacity limit blocks auditing. Unfamiliar failures and unresolved audit writes require investigation. Code releases still use tested blue/green CD.</p>
