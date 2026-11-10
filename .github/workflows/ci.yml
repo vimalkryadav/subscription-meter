@@ -53,5 +53,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m unittest discover -s scripts/tests -p 'test_terminal_setup.py' -v
-      - run: node --test frontend/tests/setup-command.test.mjs
+      - run: ./scripts/tests/windows_setup_ci.ps1
