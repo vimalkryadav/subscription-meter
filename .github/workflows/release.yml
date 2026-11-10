@@ -26,6 +26,7 @@ jobs:
         with:
           node-version: '22'
       - run: ./scripts/tests/windows_setup_ci.ps1
+        shell: powershell
   build:
     needs: windows-setup
     if: github.ref == 'refs/heads/main'

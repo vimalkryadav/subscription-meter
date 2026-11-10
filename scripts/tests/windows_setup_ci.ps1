@@ -30,7 +30,7 @@ exit $LASTEXITCODE
     $child = $child.Replace('__ROOT__', $root.Replace("'", "''")).Replace('__REPO__', $repo.Replace("'", "''")).Replace('__PYTHON__', $python.Replace("'", "''")).Replace('__NODE__', $node.Replace("'", "''"))
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($child))
     Start-Service seclogon
-    $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credential -LoadUserProfile -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -WorkingDirectory $root -RedirectStandardOutput "$root\stdout.log" -RedirectStandardError "$root\stderr.log" -Wait -PassThru
+    $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credential -LoadUserProfile -UseNewEnvironment -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -WorkingDirectory $root -RedirectStandardOutput "$root\stdout.log" -RedirectStandardError "$root\stderr.log" -Wait -PassThru
     Get-Content -LiteralPath "$root\stdout.log"
     Get-Content -LiteralPath "$root\stderr.log"
     if ($process.ExitCode -ne 0) { throw "Native Windows checks failed: $($process.ExitCode)" }
