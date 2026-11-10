@@ -2,8 +2,7 @@ import { useState } from 'react';
 import './connection.css';
 import installerUrl from '../../setup/setup-claude.py?url';
 
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-const psQuote = (value: string) => "'" + value.replaceAll("'", "''") + "'";
+import { setupCommand, quote, psQuote } from './setup-command';
 
 function Command({ value, label }: { value: string; label: string }) {
   const [message, setMessage] = useState('');
@@ -19,10 +18,7 @@ export default function ConnectionSetup({ gateway }: { gateway: string }) {
   const [windows, setWindows] = useState(/Windows/i.test(navigator.userAgent));
   const origin = new URL(gateway).origin;
   const script = new URL(installerUrl, window.location.href).href;
-  function command(flags: string) {
-    if (windows) return `& {\n  $setup = Join-Path ([IO.Path]::GetTempPath()) ('control-usage-' + [guid]::NewGuid() + '.py')\n  try {\n    Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 -Uri ${psQuote(script)} -OutFile $setup -ErrorAction Stop\n    py -3 "$setup" ${flags}\n    if ($LASTEXITCODE -ne 0) { throw 'Setup did not complete.' }\n  } finally {\n    Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue\n  }\n}`;
-    return `(\n  setup_dir="$(mktemp -d)" || exit 1\n  trap 'rm -rf "$setup_dir"' EXIT\n  curl --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 60 ${quote(script)} -o "$setup_dir/setup.py" &&\n  python3 "$setup_dir/setup.py" ${flags}\n)`;
-  }
+  const command = (flags: string) => setupCommand(script, flags, windows);
   return <div>
     <h3>Set up once</h3>
     <div className="setup-platform" role="group" aria-label="Terminal operating system">

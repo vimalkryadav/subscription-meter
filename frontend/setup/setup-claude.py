@@ -63,7 +63,8 @@ if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
     try:
         subprocess.run([str(executable), '-NoProfile', '-NonInteractive', '-Command', script],
                        env={**os.environ, 'CONTROL_USAGE_ACL_PATH': str(path),
-                            'CONTROL_USAGE_ACL_PRIVATE': '1' if private else '0'},
+                            'CONTROL_USAGE_ACL_PRIVATE': '1' if private else '0',
+                            'PSModulePath': str(executable.parent / 'Modules')},
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=30, check=True)
     except subprocess.CalledProcessError as error:

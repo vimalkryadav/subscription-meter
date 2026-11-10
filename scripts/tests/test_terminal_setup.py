@@ -139,7 +139,8 @@ foreach ($rule in $rules) {
 }
 """
         subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
-                       env={**os.environ, 'CONTROL_USAGE_TEST_PATH': str(path)}, check=True,
+                       env={**os.environ, 'CONTROL_USAGE_TEST_PATH': str(path),
+                            'PSModulePath': str(Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/Modules')}, check=True,
                        capture_output=True, timeout=30)
 
     def test_unicode_settings_and_bom(self):
