@@ -512,3 +512,7 @@ identifiers to keep operational resources stable; the platform name is control-u
 ### Persistent member terminal setup
 
 The member portal and admin Connection view provide one copyable macOS/Linux setup command with a hidden member-key prompt. The default merges persistent gateway settings into `~/.claude/settings.json`, so users run ordinary `claude` across terminals. A private backup supports undo while preserving later edits. An optional separate profile retains the `claude-work` launcher for users keeping personal and work accounts separate. See [the admin guide](docs/admin-guide.md#one-time-terminal-setup) for rotation, removal and limitations.
+
+### Optimization council
+
+The [10 November 2026 council plan](docs/reviews/2026-11-10/README.md) consolidates independent UI/frontend, backend, database and operations reviews, measured baselines, staged acceptance/rollback gates, Windows onboarding and criteria for another Coder workspace. Recommendations are distinguished from shipped functionality.
