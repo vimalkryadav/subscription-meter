@@ -49,5 +49,22 @@ public class OperationsController {
             return new Report(generated.toString(),status,stale,List.copyOf(checks));
         } catch(Exception ignored) { return unavailable(); }
     }
+    public record Recovery(String generatedAt,String status,String action,List<String> failedChecks,boolean stale) {}
+    @GetMapping("/admin/recovery") public Recovery recovery() {
+        try {
+            if(path.isBlank())throw new IllegalStateException();
+            byte[] bytes;
+            try(var stream=Files.newInputStream(Path.of(path).resolveSibling("recovery.json"))){bytes=stream.readNBytes(4097);}
+            if(bytes.length>4096)throw new IllegalStateException();
+            var root=json.readTree(bytes);
+            String status=root.path("status").asText(),action=root.path("action").asText();
+            if(root.path("schemaVersion").asInt()!=1||!Set.of("healthy","recovered","needs_attention").contains(status)
+                ||!Set.of("none","prune_committed").contains(action)||!root.path("failedChecks").isArray()||root.path("failedChecks").size()>LABELS.size())throw new IllegalStateException();
+            var failed=new ArrayList<String>();
+            for(var item:root.path("failedChecks")){if(!LABELS.containsKey(item.asText()))throw new IllegalStateException();failed.add(item.asText());}
+            Instant at=Instant.parse(root.path("generatedAt").asText());long age=Duration.between(at,clock.instant()).getSeconds();
+            return new Recovery(at.toString(),status,action,failed,age>4500||age< -30);
+        }catch(Exception ignored){return new Recovery(null,"unavailable","none",List.of(),true);}
+    }
     private Report unavailable() { return new Report(null,"unavailable",true,List.of()); }
 }

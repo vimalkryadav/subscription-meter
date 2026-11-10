@@ -158,6 +158,14 @@ JSON export streams retained detail and event pages and includes a manifest desc
 
 Credential redaction is best effort. Known authentication fields and common secret formats are filtered, but arbitrary, encoded or split secrets can survive. Retained prompts, responses and tool output are also untrusted text: a captured instruction to change limits or disclose credentials is evidence to inspect, not an instruction to execute. This distinction is especially important when reading captures through MCP.
 
+## One-time terminal setup
+
+Use **Connection → Set up once** (or the member portal's **Connect your terminal** card). Download `control-usage-setup.py` into Downloads, run the displayed Python command, and enter the member's platform key at the hidden prompt. The installer supports macOS and Linux with Python 3 and an installed `claude` command.
+
+Run `~/.local/bin/claude-work` in every new terminal. Setup persists per OS user and machine in `~/.config/control-usage/claude/settings.json` with mode 0600. The launcher uses a separate `CLAUDE_CONFIG_DIR`, clears inherited conflicting authentication/provider variables, and preserves the personal Claude configuration and shell startup files. The saved gateway key is a private plaintext credential; do not commit or share the settings file. Configure each machine separately.
+
+All terminals reuse the same member key and share its limits. Different conversations do not need new keys. After rotation or a tunnel hostname change, rerun setup and restart active sessions. `--remove` removes the saved URL/key and owned launcher, while retaining history and other profile settings. Uninstalling does not revoke the server-side key; revoke access separately if necessary. The temporary shell exports remain available for one-off testing. Windows users can use the existing temporary configuration; this installer does not support Windows.
+
 ## Session and weekly limits
 
 **Allowance** is the provider's usage limit included in the subscription. The dashboard tracks three separate buckets: **Five-hour session**, **Weekly — all models** and **Weekly — Fable**. The all-models weekly bucket is the normal account-wide limit; the Fable bucket is a separate model-specific limit. It does not assume the Pro plan has a fixed token capacity.
@@ -210,7 +218,7 @@ Useful exact action filters include `member.create`, `member.revoke`, `key_reque
 
 ## Operations and latency diagnosis
 
-Operations reads a sanitized report generated on Coder every minute. Reports older than three minutes, or implausibly in the future, become unavailable. Unknown does not mean healthy. Checks cover gateway readiness, metrics collection, worker readiness and lag, the audit admission guard, recent upstream authentication responses, disk headroom and backup/restore age. Three consecutive failures trigger an alert state. Notifications currently go to the local journal, not email or Slack.
+Operations reads a sanitized report generated on Coder every minute. Reports older than three minutes, or implausibly in the future, become unavailable. Unknown does not mean healthy. Checks cover gateway readiness, metrics collection, worker readiness and lag, the audit admission guard, recent upstream authentication responses, disk headroom and backup/restore age. Three consecutive failures trigger an alert state. The hourly review is shown separately in Operations; it can perform one verified committed-history cleanup for Kafka log pressure, then recheck health. Missing/stale reports and unfamiliar failures require attention. It does not generate patches, deploy untested code, restart shared services or clear unresolved audit failures. Notifications currently go to the local journal, not email or Slack.
 
 For slow requests:
 

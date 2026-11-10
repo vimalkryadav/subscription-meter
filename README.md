@@ -508,3 +508,7 @@ a private database backup and stopping the app. Unattributed access rejections a
 retained because their provenance cannot be established. The deployment directory,
 Compose project, and GitHub repository retain their existing `subscription-meter`
 identifiers to keep operational resources stable; the platform name is control-usage.
+
+### Persistent member terminal setup
+
+The member portal and admin Connection view provide a downloadable one-time macOS/Linux installer. It saves a private dedicated Claude profile and installs `~/.local/bin/claude-work`, usable from every new terminal without re-exporting the member key. It preserves personal Claude login and shell startup files. See [the admin guide](docs/admin-guide.md#one-time-terminal-setup) for rotation, removal and limitations.

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Heading, Notice, Panel, useResource } from './ui';
+import { date, Heading, Notice, Panel, useResource } from './ui';
 import StreamProbe from './StreamProbe';
 import './operations.css';
 interface Check { id: string; label: string; state: 'ok' | 'failed' | 'unknown'; value: number | null; unit: string; consecutiveFailures: number; alerting: boolean }
@@ -17,6 +17,7 @@ const explanations: Record<string, string> = {
 };
 export default function Operations() {
   const resource = useResource<Report>('/admin/operations');
+  const recovery = useResource<{generatedAt:string|null;status:string;action:string;failedChecks:string[];stale:boolean}>('/admin/recovery');
   const refresh = useRef(resource.refresh); refresh.current = resource.refresh;
   useEffect(() => { const interval = setInterval(() => refresh.current(), 60_000); return () => clearInterval(interval); }, []);
   const data = resource.data;
@@ -24,6 +25,12 @@ export default function Operations() {
   return <><Heading title="Operations" subtitle="Local service health, audit processing, and recovery readiness."><button disabled={resource.loading} onClick={resource.refresh}>Refresh health</button></Heading>
     <Notice error>{resource.error}</Notice>
     <StreamProbe />
+    <Panel title="Hourly health review">
+      <p>Automatic recovery is limited to reclaiming already-processed Kafka history when a verified capacity limit blocks auditing. Unfamiliar failures and unresolved audit writes require investigation. Code releases still use tested blue/green CD.</p>
+      <Notice error>{recovery.error}</Notice>
+      {recovery.data && <p role="status">{recovery.data.stale ? 'Hourly report unavailable or stale' : recovery.data.status.replaceAll('_',' ')} · {date(recovery.data.generatedAt)} · action: {recovery.data.action.replaceAll('_',' ')}{recovery.data.failedChecks.length ? ' · checks: '+recovery.data.failedChecks.join(', ') : ''}</p>}
+      <button onClick={recovery.refresh} disabled={recovery.loading}>Refresh hourly report</button>
+    </Panel>
     {resource.loading && !data && <p role="status">Loading operational health…</p>}
     {data && <>
       <Notice error={stale || data.status !== 'ok'}>{stale ? 'Monitoring report is missing or stale. Current health is unknown.' : data.status === 'ok' ? 'All monitored checks are healthy.' : data.status === 'alert' ? 'A sustained operational issue needs attention.' : 'One or more checks need attention; sustained checks will raise an alert.'}</Notice>

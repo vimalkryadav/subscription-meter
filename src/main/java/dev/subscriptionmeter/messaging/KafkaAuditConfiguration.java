@@ -24,8 +24,16 @@ public class KafkaAuditConfiguration {
             @Value("${meter.audit.kafka.partitions:1}")int partitions,MeterRegistry metrics){
         var guard=new KafkaAuditSafetyGuard(auditKafkaAdmin,topic,group,partitions);
         metrics.gauge("meter.audit.guard.ready",guard,g->g.ready()?1:0);
+        metrics.gauge("meter.audit.broker.log.bytes",guard,KafkaAuditSafetyGuard::logBytes);
         for(var reason:KafkaAuditSafetyGuard.Reason.values())metrics.gauge("meter.audit.guard.reason",io.micrometer.core.instrument.Tags.of("reason",reason.name()),guard,g->g.reason()==reason?1:0);
         return guard;
+    }
+    @Bean(initMethod="start",destroyMethod="close") KafkaAuditMaintenance auditMaintenance(Admin auditKafkaAdmin,
+            KafkaAuditSafetyGuard guard,MeterRegistry metrics,
+            @Value("${meter.audit.kafka.topic:control-usage.audit.v1}")String topic,
+            @Value("${meter.audit.kafka.group:control-usage-audit-v1}")String group){
+        return new KafkaAuditMaintenance(guard::logBytes,
+            ()->AuditCommittedPruner.prune(auditKafkaAdmin,topic,group,java.time.Duration.ZERO),metrics);
     }
     @Bean(destroyMethod="close") KafkaAuditPublisher auditPublisher(
             @Value("${meter.audit.kafka.bootstrap-servers:localhost:9092}")String servers,

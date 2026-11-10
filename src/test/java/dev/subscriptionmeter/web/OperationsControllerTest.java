@@ -31,6 +31,17 @@ class OperationsControllerTest {
         Files.writeString(file,report(now.minusSeconds(181)));assertThat(controller.operations().stale()).isTrue();
         Files.writeString(file,report(now.plusSeconds(60)));assertThat(controller.operations().status()).isEqualTo("unavailable");
     }
+    @Test void recoveryReportRejectsUnknownActionsAndStaleTimestamps() throws Exception {
+        var controller=new OperationsController(folder.resolve("report.json").toString(),Clock.fixed(now,ZoneOffset.UTC));
+        assertThat(controller.recovery().stale()).isTrue();
+        var report=new HashMap<String,Object>();report.put("schemaVersion",1);report.put("generatedAt",now.toString());
+        report.put("status","needs_attention");report.put("action","none");report.put("failedChecks",List.of("gateway"));report.put("secret","not exported");
+        Path file=folder.resolve("recovery.json");var json=JsonMapper.builder().build();Files.writeString(file,json.writeValueAsString(report));
+        assertThat(controller.recovery().status()).isEqualTo("needs_attention");assertThat(controller.recovery().stale()).isFalse();
+        assertThat(json.writeValueAsString(controller.recovery())).doesNotContain("not exported");
+        report.put("generatedAt",now.minusSeconds(4501).toString());Files.writeString(file,json.writeValueAsString(report));assertThat(controller.recovery().stale()).isTrue();
+        report.put("action","arbitrary-command");Files.writeString(file,json.writeValueAsString(report));assertThat(controller.recovery().status()).isEqualTo("unavailable");
+    }
     @Test void endpointRequiresLiveAdminAuthority() throws Exception {
         var accounts=org.mockito.Mockito.mock(dev.subscriptionmeter.portal.AccountRepository.class);
         var sessions=org.mockito.Mockito.mock(dev.subscriptionmeter.portal.SessionService.class);
@@ -49,6 +60,7 @@ class OperationsControllerTest {
             assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
         }
         assertThat(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/admin/operations").servletPath("/admin/operations")).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/admin/recovery").servletPath("/admin/recovery")).andReturn().getResponse().getStatus()).isEqualTo(401);
     }
 
 }
