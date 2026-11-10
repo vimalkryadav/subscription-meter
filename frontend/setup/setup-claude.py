@@ -54,7 +54,10 @@ if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
         $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', $inherit, 'None', 'Allow')
         $acl.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $path -AclObject $acl
+    # Persist only modified sections; Set-Acl can request SACL privileges when
+    # applying a protected descriptor to a populated directory.
+    if ($directory) { [System.IO.Directory]::SetAccessControl($path, $acl) }
+    else { [System.IO.File]::SetAccessControl($path, $acl) }
     $check = Get-Acl -LiteralPath $path
     if (-not $check.AreAccessRulesProtected) { throw 'inheritance' }
     foreach ($rule in $check.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
