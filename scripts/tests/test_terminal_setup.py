@@ -201,4 +201,7 @@ foreach ($rule in $rules) {
             folder = Path(temp).resolve() / 'private'
             with patch.object(m.subprocess, 'run', side_effect=fixture_run):
                 m.secure_directory(folder)
+                m.atomic(folder / 'empty-fixture', '', 0o600)
+                m.secure_directory(folder)
+                m.windows_access(folder / 'empty-fixture', private=True)
             self.assert_private_acl(folder)
