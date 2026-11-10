@@ -28,7 +28,12 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 exit $LASTEXITCODE
 '@
     $child = $child.Replace('__ROOT__', $root.Replace("'", "''")).Replace('__REPO__', $repo.Replace("'", "''")).Replace('__PYTHON__', $python.Replace("'", "''")).Replace('__NODE__', $node.Replace("'", "''"))
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($child))
+    # CreateProcessWithLogonW limits the command line to 1024 characters.
+    # Keep the bootstrap short; the fixture script contains no credentials.
+    $childPath = Join-Path $root 'checks.ps1'
+    Set-Content -LiteralPath $childPath -Value $child -Encoding UTF8
+    $bootstrap = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('$childPath')))"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
     Start-Service seclogon
     $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credential -LoadUserProfile -UseNewEnvironment -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -WorkingDirectory $root -RedirectStandardOutput "$root\stdout.log" -RedirectStandardError "$root\stderr.log" -Wait -PassThru
     Get-Content -LiteralPath "$root\stdout.log"
