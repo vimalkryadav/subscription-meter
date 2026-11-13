@@ -31,14 +31,14 @@ public class JdbcAdminOperations implements AdminOperations {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
     }
     private List<Map<String,Object>> rawSessions(String accountId){
-        return jdbc.queryForList("SELECT token_hash,last_seen_at,expires_at FROM portal_sessions WHERE account_id=? ORDER BY last_seen_at DESC",accountId);
+        return jdbc.queryForList("SELECT s.token_hash,s.last_seen_at,s.expires_at,f.session_hash AS persistent FROM portal_sessions s LEFT JOIN portal_refresh_families f ON f.session_hash=s.token_hash WHERE s.account_id=? ORDER BY s.last_seen_at DESC",accountId);
     }
     public List<Map<String,Object>> sessions(String accountId){
         accountExists(accountId,false);Instant now=Instant.now();var result=new ArrayList<Map<String,Object>>();
         for(var row:rawSessions(accountId)){
             var safe=new LinkedHashMap<String,Object>();safe.put("sessionRef",reference((String)row.get("token_hash")));
-            safe.put("lastSeenAt",row.get("last_seen_at"));safe.put("expiresAt",row.get("expires_at"));
-            safe.put("active",instant(row.get("expires_at")).isAfter(now)&&instant(row.get("last_seen_at")).isAfter(now.minusSeconds(3600)));
+            safe.put("lastSeenAt",row.get("last_seen_at"));safe.put("expiresAt",row.get("persistent")!=null?null:row.get("expires_at"));safe.put("persistent",row.get("persistent")!=null);
+            safe.put("active",row.get("persistent")!=null || instant(row.get("expires_at")).isAfter(now)&&instant(row.get("last_seen_at")).isAfter(now.minusSeconds(3600)));
             result.add(safe);
         }return result;
     }

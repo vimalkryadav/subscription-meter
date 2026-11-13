@@ -12,12 +12,16 @@ import org.springframework.web.server.ResponseStatusException;
 @Component
 @Order(10)
 public class PortalAuthFilter extends OncePerRequestFilter {
-    public static final String COOKIE="meter_session", ACCOUNT="portal.account";
+    public static final String COOKIE="meter_session", REFRESH="meter_refresh", ACCOUNT="portal.account";
     private final SessionService sessions;
     public PortalAuthFilter(SessionService sessions) { this.sessions=sessions; }
     public static String cookie(HttpServletRequest req) {
+        return cookie(req,COOKIE);
+    }
+    public static String refreshCookie(HttpServletRequest req){return cookie(req,REFRESH);}
+    private static String cookie(HttpServletRequest req,String name) {
         if(req.getCookies()==null) return null;
-        return Arrays.stream(req.getCookies()).filter(c->c.getName().equals(COOKIE)).map(Cookie::getValue).findFirst().orElse(null);
+        return Arrays.stream(req.getCookies()).filter(c->c.getName().equals(name)).map(Cookie::getValue).findFirst().orElse(null);
     }
     protected void doFilterInternal(HttpServletRequest req,HttpServletResponse res,FilterChain chain) throws IOException,ServletException {
         String path=req.getServletPath();
@@ -28,12 +32,12 @@ public class PortalAuthFilter extends OncePerRequestFilter {
         // Custom headers require CORS preflight; no cross-origin access is enabled.
         if(write && (!"1".equals(req.getHeader("X-Portal-Request")) ||
                 "cross-site".equals(req.getHeader("Sec-Fetch-Site")))) { reject(res,403); return; }
-        boolean publicAuth=Set.of("/portal/api/register","/portal/api/login").contains(path);
+        boolean publicAuth=Set.of("/portal/api/register","/portal/api/login","/portal/api/refresh").contains(path);
         if(!publicAuth) {
             String raw=cookie(req);
             try { req.setAttribute(ACCOUNT,sessions.authenticate(raw)); }
             catch(ResponseStatusException e) { reject(res,401); return; }
-            if(write && !PortalTokens.equal(PortalTokens.csrf(raw),req.getHeader("X-CSRF-Token"))) { reject(res,403); return; }
+            if(write && !PortalTokens.equal(sessions.csrf(raw),req.getHeader("X-CSRF-Token"))) { reject(res,403); return; }
         }
         chain.doFilter(req,res);
     }

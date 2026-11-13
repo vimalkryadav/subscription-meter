@@ -205,7 +205,7 @@ Some clients do not expose resource/prompt menus. Use `search_admin_guide` to re
 
 ## Expiry, revocation and credential handling
 
-An MCP session has the same 12-hour absolute and one-hour idle limits as any admin session. Tool calls can update activity, but cannot extend its absolute lifetime. Re-run the private login helper after expiry and keep the configured file path unchanged. The bridge re-reads it on the next operation.
+The private MCP helper creates a legacy session with a 12-hour absolute and one-hour idle limit. Persistent browser refresh logins use a separate flow; they do not change the MCP credential file format. Tool calls can update activity, but cannot extend its absolute lifetime. Re-run the private login helper after expiry and keep the configured file path unchanged. The bridge re-reads it on the next operation.
 
 To disconnect access, revoke the corresponding session under Accounts & sessions, or revoke all sessions for that administrator if that broader effect is intended. Removing a local file prevents this bridge from loading it but does not revoke a copied server-side session. Logging out a browser's different session does not automatically revoke the MCP session.
 

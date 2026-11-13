@@ -125,7 +125,7 @@ Sign in with your administrator account at the root URL; it opens `/manage`.
 The `/manage` document is served by the application only after validating an active
 admin session. Signed-out or expired sessions redirect to `/`; member accounts get
 403. The document is outside the public static directory, and `/manage.html` is not
-served. The dashboard also redirects to login if its session expires while open.
+served. The dashboard renews expired browser access automatically; rejected or revoked refresh logins return to sign-in.
 The deployed owner is `vimalkryadav`. The old admin bearer key is disabled whenever
 an admin account exists. Account sessions use HttpOnly cookies, not localStorage.
 
@@ -165,12 +165,24 @@ the service. Persistent volumes are local to this workspace.
 
 Token requests, decisions, and issuance are serialized per account in database
 transactions. Repeated or concurrent claims cannot issue multiple active tokens.
-Passwords use salted PBKDF2-HMAC-SHA256 with 600,000 iterations. Sessions are random
-opaque cookies (`Secure`, `HttpOnly`, `SameSite=Strict`, host-only, `/`)
-with hashed server-side storage, a 12-hour absolute lifetime, and a one-hour idle
-limit. Up to five sessions are retained per account. Session IDs rotate on login;
-logout invalidates them. CSRF tokens protect authenticated mutations, while a
-required custom header protects signup/login from form-based cross-origin posts.
+Passwords use salted PBKDF2-HMAC-SHA256 with 600,000 iterations. Browser logins use
+opaque 15-minute access tokens and rotating refresh tokens in host-only `Secure`,
+`HttpOnly`, `SameSite=Strict` cookies. Access uses `/`; refresh is limited to
+`/portal/api`. The browser renews automatically when access expires. Refresh logins
+have no server-side idle or absolute expiry; their persistent cookie lasts up to
+400 days and is renewed on rotation. Logout or admin session revocation removes the
+entire login family. Browser cookie deletion, a changed tunnel hostname or detected
+refresh-token reuse can also require a new login. Sign in once after upgrading to
+obtain the new refresh cookie. Tokens are never stored in browser web storage.
+
+The database stores bearer hashes and encrypted short retry receipts, not plaintext
+bearers. Concurrent refreshes have a 30-second retry window; later reuse of a retained
+rotated token revokes its family. Retired token history is retained for 30 days.
+CSRF stays stable for each login, and authenticated writes require it. Signup,
+login and refresh require a custom request header; cross-site writes are rejected.
+Legacy clients, including the private MCP login helper, retain a 12-hour absolute
+and one-hour idle session lifetime (up to five legacy sessions per account). The
+new browser requests persistent login using `X-Portal-Persistent: 1`.
 CORS is not enabled. Password hashing concurrency is bounded per instance; login throttles are shared
 in PostgreSQL across application instances. Public portal request bodies are capped at 16 KiB by Caddy.
 

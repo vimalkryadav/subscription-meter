@@ -23,7 +23,7 @@ public class AccountingController {
     public record ClassificationUpdate(String category){}
     @PatchMapping("/requests/{id}/classification") public Map<String,Object> classify(@PathVariable String id,
             @RequestBody ClassificationUpdate body,HttpServletRequest request) {
-        String actor=sessions.authenticate(PortalAuthFilter.cookie(request));
+        String actor=sessions.actor(request);
         if(body==null||body.category()==null)throw new IllegalArgumentException("Category required");
         accounting.classify(id,body.category(),actor); return accounting.detail(id);
     }

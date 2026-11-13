@@ -15,7 +15,7 @@ public class SubscriptionAccountingController {
     @GetMapping public List<Map<String,Object>> list(){return service.list();}
     @PostMapping @ResponseStatus(HttpStatus.CREATED)
     public Map<String,String> create(@RequestBody SubscriptionAccounting.Invoice invoice,HttpServletRequest request){
-        String actor=sessions.authenticate(PortalAuthFilter.cookie(request));
+        String actor=sessions.actor(request);
         return Map.of("id",service.add(invoice,actor));
     }
     @GetMapping("/{id}/allocation") public Map<String,Object> allocation(@PathVariable String id){return service.allocation(id);}

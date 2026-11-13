@@ -35,5 +35,5 @@ public class AdministrationController {
     @GetMapping("/action-log") public List<Map<String,Object>> actions(@RequestParam(defaultValue="") String action,@RequestParam(defaultValue="50") int limit){
         if(action.length()>100||limit<1||limit>100)throw new ResponseStatusException(HttpStatus.BAD_REQUEST);return operations.actions(action,limit);
     }
-    private String actor(HttpServletRequest request){return sessions.authenticate(PortalAuthFilter.cookie(request));}
+    private String actor(HttpServletRequest request){return sessions.actor(request);}
 }

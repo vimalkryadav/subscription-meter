@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode, KeyboardEvent } from 'react';
 import { api } from '../shared/api';
 import { startResource } from './resource';
@@ -21,20 +21,23 @@ export const providers = [{ value: '', label: 'All providers' }, { value: 'anthr
 /** Every resource owns cancellation and ignores responses from superseded requests. */
 export function useResource<T>(path: string | null) {
   const [data, setData] = useState<T>();
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(!!path);
+  const [failure, setFailure] = useState<{ path: string; revision: number; message: string }>();
   const [revision, setRevision] = useState(0);
+  const [settled, setSettled] = useState<{ path: string; revision: number }>();
   const [loadedPath, setLoadedPath] = useState<string | null>(null);
+  const loaded = useRef<string | null>(null);
   useEffect(() => {
-    if (!path) { setData(undefined); setLoadedPath(null); setLoading(false); setError(''); return; }
-    setLoading(true); setError('');
+    if (!path) { setData(undefined); setLoadedPath(null); setSettled(undefined); loaded.current = null; return; }
     return startResource<T>(path, api<T>, {
-      success: value => { setData(value); setLoadedPath(path); },
-      failure: failure => setError((failure instanceof Error ? failure.message : 'Request failed') + ' Previously loaded data may be stale.'),
-      complete: () => setLoading(false),
+      success: value => { setData(value); setLoadedPath(path); loaded.current = path; },
+      failure: error => setFailure({ path, revision, message: (error instanceof Error ? error.message : 'Request failed') + (loaded.current === path ? ' Previously loaded data may be stale.' : '') }),
+      complete: () => setSettled({ path, revision }),
     });
   }, [path, revision]);
-  return { data: loadedPath === path ? data : undefined, error, loading, refresh: () => setRevision(value => value + 1) };
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
+  const loading = !!path && (settled?.path !== path || settled?.revision !== revision);
+  const error = failure?.path === path && failure.revision === revision ? failure.message : '';
+  return { data: loadedPath === path ? data : undefined, error, loading, refresh };
 }
 
 export function useMutation() {
@@ -54,8 +57,9 @@ export function useMutation() {
 export function Notice({ children, error = false }: { children?: ReactNode; error?: boolean }) {
   return children ? <div className={error ? 'cu-notice cu-error' : 'cu-notice'} role={error ? 'alert' : 'status'}>{children}</div> : null;
 }
+export function Loading() { return <div className="cu-loading" role="status" aria-live="polite">Loading…</div>; }
 export function Heading({ title, subtitle, children }: { title: string; subtitle?: string; children?: ReactNode }) {
-  return <div className="cu-heading"><div><p className="cu-eyebrow">CONTROL-USAGE / ADMIN</p><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>{children}</div>;
+  return <div className="cu-heading"><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>{children}</div>;
 }
 export function Panel({ title, children }: { title: string; children: ReactNode }) { return <section className="cu-panel"><h2>{title}</h2>{children}</section>; }
 export function Table({ headings, children, empty, label }: { headings: string[]; children: ReactNode; empty?: boolean; label?: string }) {
@@ -80,8 +84,9 @@ export function Select({ label, value, onChange, items, disabled = false }: { la
     const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
     document.addEventListener('pointerdown', close); return () => document.removeEventListener('pointerdown', close);
   }, []);
-  function choose(index: number) { onChange(items[index].value); setOpen(false); trigger.current?.focus(); }
+  function choose(index: number) { if (!items[index]) return; onChange(items[index].value); setOpen(false); trigger.current?.focus(); }
   function key(event: KeyboardEvent) {
+    if (disabled || !items.length) return;
     if (event.key === 'Tab') { setOpen(false); return; }
     if (event.key === 'Escape') { event.preventDefault(); setOpen(false); trigger.current?.focus(); return; }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {

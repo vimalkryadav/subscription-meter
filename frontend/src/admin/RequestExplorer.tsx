@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { categories, count, date, duration, Heading, money, Notice, options, Panel, pretty, providers, Select, Segments, Table, text, useMutation, useResource } from './ui';
+import { categories, count, date, duration, Heading, Loading, money, Notice, options, Panel, pretty, providers, Select, Segments, Table, text, useMutation, useResource } from './ui';
 import type { Row } from './ui';
 import { captureMessages, emptyFilters, localDateInput, persistFilters, presetWindow, readFilters, searchParams, searchWindow } from './search';
 import type { Filters } from './search';
+import './investigation.css';
+import InvestigationRegion from './InvestigationRegion';
+import { getSession } from '../shared/api';
 
 interface Page { items: Row[]; nextCursor: string | null; from: string; to: string; generatedAt: string }
 export default function RequestExplorer() {
@@ -57,7 +60,7 @@ export default function RequestExplorer() {
           <Select label="Request outcome" value={draft.state} onChange={value => field('state', value)} items={[{ value: '', label: 'All outcomes' }, ...options(['complete', 'pending', 'partial', 'disconnected', 'stream_error', 'upstream_error', 'gateway_error', 'interrupted'])]} />
         </div>
         <div className="cu-bar cu-search-actions"><div><button className="cu-primary" type="submit">Search requests</button><button type="button" disabled={!/^[A-Za-z0-9_-]{1,36}$/.test(draft.requestId.trim())} onClick={() => inspect(draft.requestId.trim())}>Open ID directly</button><button type="button" onClick={() => persistFilters(emptyFilters())}>Clear</button></div><button type="button" aria-expanded={advanced} aria-controls="advanced-request-filters" onClick={() => setAdvanced(value => !value)}>Advanced filters{advancedCount ? ` (${advancedCount})` : ''} <span aria-hidden="true">{advanced ? '−' : '+'}</span></button></div>
-        <p className="cu-muted">Search uses the selected dates and filters. Open ID directly looks up one request across all remaining metadata, independently of those filters.</p>
+        <p className="cu-muted">Search within the selected window, or open an exact ID across retained history.</p>
         {advanced && <div id="advanced-request-filters" className="cu-advanced-filters"><div className="cu-filter-grid">
           <Select label="Provider" value={draft.provider} onChange={value => field('provider', value)} items={providers} />
           <Select label="Model family" value={draft.modelFamily} onChange={value => field('modelFamily', value)} items={[{ value: '', label: 'All model families' }, { value: 'fable', label: 'Fable only' }]} />
@@ -69,29 +72,48 @@ export default function RequestExplorer() {
         </div></div>}
       </form>
       <Notice error>{validation || result.error}</Notice>
-      <p className="cu-result-summary" aria-live="polite"><strong>{result.loading ? 'Loading requests…' : result.data ? `${result.data.items.length} requests on this page` : 'No loaded results'}</strong><span>{date(window.from)} – {date(window.to)}</span></p>
-      <div aria-busy={result.loading}><Table headings={['Started / member', 'Model', 'Status', 'Duration', 'Capture', '']} empty={!result.loading && !result.data?.items.length}>{result.data?.items.map(row => <tr key={text(row.id)}><td>{date(row.started_at)}<br />{text(row.name)}</td><td>{text(row.model)}</td><td>{text(row.status_code)} · {text(row.state)}</td><td>{duration(row.duration_ms)}</td><td><span className="cu-badge">{text(row.capture_status)}</span></td><td><button onClick={() => inspect(text(row.id))} aria-label={'Inspect request ' + text(row.id)}>Inspect</button></td></tr>)}</Table></div>
+      <InvestigationRegion loading={result.loading}>{result.data && <>
+      <p className="cu-result-summary" aria-live="polite"><strong>{`${result.data.items.length} requests on this page`}</strong><span>{date(window.from)} – {date(window.to)}</span></p>
+      <div aria-busy={result.loading}><Table headings={['Started / member', 'Model', 'Status', 'Duration', 'Capture', '']} empty={!result.data.items.length}>{result.data?.items.map(row => <tr key={text(row.id)}><td>{date(row.started_at)}<br />{text(row.name)}</td><td>{text(row.model)}</td><td>{text(row.status_code)} · {text(row.state)}</td><td>{duration(row.duration_ms)}</td><td><span className="cu-badge">{text(row.capture_status)}</span></td><td><button onClick={() => inspect(text(row.id))} aria-label={'Inspect request ' + text(row.id)}>Inspect</button></td></tr>)}</Table></div>
       <div className="cu-bar"><button disabled={result.loading || cursors.length === 1} onClick={() => setCursors(current => current.slice(0, -1))}>Previous</button><button disabled={result.loading || !result.data?.nextCursor} onClick={() => { if (result.data?.nextCursor) setCursors(current => [...current, result.data!.nextCursor!]); }}>Next</button><span>Page {cursors.length} · {result.data?.items.length || 0} requests</span></div>
+      </>}</InvestigationRegion>
     </Panel>
     {detail && <RequestDetail key={detail} id={detail} onClose={closeDetail} />}
     <div className="cu-bar"><button aria-expanded={showUsage} aria-controls="request-usage" onClick={() => setShowUsage(value => !value)}>{showUsage ? 'Hide' : 'Show'} recent member usage</button><button aria-expanded={showAccess} aria-controls="request-access" onClick={() => setShowAccess(value => !value)}>{showAccess ? 'Hide' : 'Show'} recent gateway access</button></div>
-    {showUsage && <div id="request-usage"><Panel title="Usage by member"><p className="cu-muted">Last {applied.days} days. These recent aggregates are independent of custom search dates and all detailed filters.</p><Notice error>{analytics.error}</Notice><Table headings={['Member / model', 'State', 'Requests', 'Input', 'Output', 'Cache write', 'Cache read']} empty={!analytics.loading && !analytics.data?.rows.length}>{analytics.data?.rows.map((row, i) => <tr key={i}><td>{text(row.name)} / {text(row.model)}</td><td>{text(row.state)}</td>{['requests', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].map(key => <td key={key}>{count(row[key])}</td>)}</tr>)}</Table></Panel></div>}
-    {showAccess && <div id="request-access"><Panel title="Gateway access"><p className="cu-muted">Latest 50 attempts in the last {applied.days} days, including rejected requests. Independent of custom search dates and detailed filters. Rejected bodies are not captured.</p><Notice error>{access.error}</Notice><Table headings={['Time', 'Request ID', 'Method / path', 'Status', 'Duration']} empty={!access.loading && !access.data?.length}>{access.data?.map((row, i) => <tr key={i}><td>{date(row.started_at)}</td><td>{row.request_id ? <button onClick={() => inspect(text(row.request_id))}>{text(row.request_id)}</button> : '—'}</td><td>{text(row.method)} {text(row.path)}</td><td>{text(row.status_code)}</td><td>{duration(row.duration_ms)}</td></tr>)}</Table></Panel></div>}
+    {showUsage && <div id="request-usage"><Panel title="Usage by member"><p className="cu-muted">Last {applied.days} days. These recent aggregates are independent of custom search dates and all detailed filters.</p><Notice error>{analytics.error}</Notice>{analytics.loading ? <Loading /> : analytics.data && <Table headings={['Member / model', 'State', 'Requests', 'Input', 'Output', 'Cache write', 'Cache read']} empty={!analytics.loading && !analytics.data?.rows.length}>{analytics.data?.rows.map((row, i) => <tr key={i}><td>{text(row.name)} / {text(row.model)}</td><td>{text(row.state)}</td>{['requests', 'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].map(key => <td key={key}>{count(row[key])}</td>)}</tr>)}</Table>}</Panel></div>}
+    {showAccess && <div id="request-access"><Panel title="Gateway access"><p className="cu-muted">Latest 50 attempts in the last {applied.days} days, including rejected requests. Independent of custom search dates and detailed filters. Rejected bodies are not captured.</p><Notice error>{access.error}</Notice>{access.loading ? <Loading /> : access.data && <Table headings={['Time', 'Request ID', 'Method / path', 'Status', 'Duration']} empty={!access.loading && !access.data?.length}>{access.data?.map((row, i) => <tr key={i}><td>{date(row.started_at)}</td><td>{row.request_id ? <button onClick={() => inspect(text(row.request_id))}>{text(row.request_id)}</button> : '—'}</td><td>{text(row.method)} {text(row.path)}</td><td>{text(row.status_code)}</td><td>{duration(row.duration_ms)}</td></tr>)}</Table>}</Panel></div>}
   </>;
 }
 
 function RequestDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const request = useResource<Row>('/admin/request-search/' + encodeURIComponent(id) + '/summary');
   const [tab, setTab] = useState('summary');
+  const [exporting, setExporting] = useState(false), [exportError, setExportError] = useState('');
+  const exportActive = useRef(false), exportAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => exportAbort.current?.abort(), []);
+  async function download() {
+    if (exportActive.current) return;
+    exportActive.current = true; setExporting(true); setExportError('');
+    const controller = new AbortController(); exportAbort.current = controller;
+    try {
+      await getSession(controller.signal);
+      if (controller.signal.aborted) return;
+      const link = document.createElement('a');
+      link.href = '/admin/requests/' + encodeURIComponent(id) + '/export';
+      link.download = 'request-' + id + '.json';
+      document.body.append(link); link.click(); link.remove();
+    } catch (failure) { if (!controller.signal.aborted) setExportError(failure instanceof Error ? failure.message : 'Download could not start. Try again.'); }
+    finally { exportActive.current = false; setExporting(false); }
+  }
   const [revision, setRevision] = useState(0), section = useRef<HTMLElement>(null);
   useEffect(() => { section.current?.focus(); }, [id]);
   const tabs = ['summary', 'input', 'output', 'events', 'headers', 'value'];
   const data = request.data;
-  return <section className="cu-panel" ref={section} tabIndex={-1} aria-busy={request.loading} aria-label={'Request detail ' + id}><div className="cu-bar"><h2>Request detail</h2><button onClick={() => { request.refresh(); setRevision(value => value + 1); }} disabled={request.loading}>Refresh detail</button>{data && <a className="cu-button" href={'/admin/requests/' + encodeURIComponent(id) + '/export'} download={'request-' + id + '.json'}>Download JSON</a>}<button onClick={onClose}>Close detail</button></div>
-    <p className="cu-mono">{id}</p><Notice error>{request.error}</Notice><Notice>{request.loading ? 'Loading request…' : captureMessages[String(data?.capture_status)] || 'Capture status unavailable'}</Notice>
+  return <section className="cu-panel" ref={section} tabIndex={-1} aria-busy={request.loading} aria-label={'Request detail ' + id}><div className="cu-bar"><h2>Request detail</h2><button onClick={() => { request.refresh(); setRevision(value => value + 1); }} disabled={request.loading}>Refresh detail</button>{data && <button disabled={exporting} onClick={download}>{exporting ? 'Loading…' : 'Download JSON'}</button>}<button onClick={onClose}>Close detail</button></div>
+    <p className="cu-mono">{id}</p><Notice error>{request.error || exportError}</Notice>
+    {request.loading ? <Loading /> : data && <><Notice>{captureMessages[String(data.capture_status)] || 'Capture status unavailable'}</Notice>
     <Segments label="Request detail sections" values={tabs.map(value => ({ value, label: value === 'value' ? 'Usage & category' : value[0].toUpperCase() + value.slice(1) }))} value={tab} onChange={setTab} />
-    {data && <>
-      {tab === 'summary' && <pre>{pretty(data)}</pre>}
+      {tab === 'summary' && <RequestSummary data={data} />}
       {['input', 'output', 'headers'].includes(tab) && <CaptureContent key={revision + ':' + tab} id={id} section={tab} startedAt={data.capture_version} />}
       {tab === 'events' && <Events key={revision} id={id} eventCount={data.event_count} />}
       {tab === 'value' && <RequestValue key={revision} id={id} />}
@@ -104,7 +126,7 @@ function CaptureContent({ id, section, startedAt }: { id: string; section: strin
     ? '/admin/request-search/' + encodeURIComponent(id) + '/content?' + new URLSearchParams({ startedAt: capturedAt, section }) : null);
   return <div aria-busy={resource.loading}>
     <Notice error>{resource.error}</Notice>
-    {!capturedAt ? <Notice>No retained capture version is available. Refresh the summary if capture is still pending.</Notice> : resource.loading ? <p role="status">Loading {section}…</p> : resource.data && <pre>{section === 'headers'
+    {!capturedAt ? <Notice>No retained capture version is available. Refresh the summary if capture is still pending.</Notice> : resource.loading ? <Loading /> : resource.data && <pre>{section === 'headers'
       ? 'REQUEST\n' + pretty(resource.data.requestHeaders) + '\n\nRESPONSE\n' + pretty(resource.data.responseHeaders)
       : section === 'output' && resource.data.body === '' ? 'Streaming response: inspect Events.' : pretty(resource.data.body)}</pre>}
     {resource.error && <p className="cu-muted">This capture may have expired or changed. Refresh detail to load its current summary.</p>}
@@ -114,16 +136,31 @@ function Events({ id, eventCount }: { id: string; eventCount: unknown }) {
   const [pages, setPages] = useState([0]);
   const events = useResource<Row[]>('/admin/requests/' + encodeURIComponent(id) + '/events?after=' + pages.at(-1) + '&limit=100');
   const rows = events.data || [];
-  return <><Notice error>{events.error}</Notice><p className="cu-muted">{events.loading ? 'Loading events…' : rows.length ? 'Sequences ' + text(rows[0].sequence) + '–' + text(rows.at(-1)?.sequence) : 'No events on this page. Non-streaming responses use Output.'} · {count(eventCount)} reported stored events</p>
+  return <><Notice error>{events.error}</Notice>{events.loading ? <Loading /> : events.data && <>
+    <p className="cu-muted">{rows.length ? 'Sequences ' + text(rows[0].sequence) + '–' + text(rows.at(-1)?.sequence) : 'No events on this page. Non-streaming responses use Output.'} · {count(eventCount)} reported stored events</p>
     {rows.map(row => <details key={text(row.sequence)}><summary>#{text(row.sequence)} · {text(row.event_type)} · {duration(row.elapsed_ms)}{row.truncated ? ' · incomplete frame' : ''}</summary><pre>{pretty(row.event_data)}</pre></details>)}
-    <div className="cu-bar"><button disabled={events.loading || pages.length === 1} onClick={() => setPages(current => current.slice(0, -1))}>Previous events</button><button disabled={events.loading || rows.length < 100} onClick={() => setPages(current => [...current, Number(rows.at(-1)?.sequence)])}>Next events</button></div></>;
+    <div className="cu-bar"><button disabled={pages.length === 1} onClick={() => setPages(current => current.slice(0, -1))}>Previous events</button><button disabled={rows.length < 100} onClick={() => setPages(current => [...current, Number(rows.at(-1)?.sequence)])}>Next events</button></div></>}</>;
+
 }
 function RequestValue({ id }: { id: string }) {
   const path = '/admin/requests/' + encodeURIComponent(id);
   const resource = useResource<{ estimate?: { knownSubtotalUsd?: number; status?: string }; classification?: { category?: string }; [key: string]: unknown }>(path + '/accounting');
   const change = useMutation(); const [category, setCategory] = useState(''); const [saved, setSaved] = useState(false);
   useEffect(() => { setCategory(resource.data?.classification?.category || 'unknown'); }, [resource.data]);
-  return <><Notice error>{resource.error || change.error}</Notice><p>API-equivalent value: {money(resource.data?.estimate?.knownSubtotalUsd)} · {resource.data?.estimate?.status || 'unavailable'}. This is not a subscription charge.</p><pre>{resource.loading ? 'Loading…' : pretty(resource.data)}</pre>
+  return <><Notice error>{resource.error || change.error}</Notice>{resource.loading ? <Loading /> : resource.data && <><p>API-equivalent value: {money(resource.data?.estimate?.knownSubtotalUsd)} · {resource.data?.estimate?.status || 'unavailable'}. This is not a subscription charge.</p><details><summary>Value calculation details</summary><pre>{pretty(resource.data)}</pre></details>
     <Select label="Work category" value={category} onChange={value => { setCategory(value); setSaved(false); }} items={options(categories)} />
-    <div className="cu-bar"><button disabled={change.busy || !resource.data} onClick={async () => { try { await change.run(path + '/classification', 'PATCH', { category }); setSaved(true); resource.refresh(); } catch { /* hook displays error */ } }}>Save manual category</button>{saved && <span role="status">Category saved.</span>}</div><p className="cu-muted">Categories describe request content, not productivity or effort. Manual changes are audited.</p></>;
+    <div className="cu-bar"><button disabled={change.busy || !resource.data} onClick={async () => { try { await change.run(path + '/classification', 'PATCH', { category }); setSaved(true); resource.refresh(); } catch { /* hook displays error */ } }}>Save manual category</button>{saved && <span role="status">Category saved.</span>}</div><p className="cu-muted">Categories describe request content, not productivity or effort. Manual changes are audited.</p></>}</>;
+}
+
+function RequestSummary({ data }: { data: Row }) {
+  const fields = [
+    ['Member', text(data.name)], ['Started', date(data.started_at)],
+    ['Model', text(data.model)], ['Outcome', text(data.status_code) + ' · ' + text(data.state)],
+    ['Duration', duration(data.duration_ms)], ['First response byte', duration(data.first_byte_ms)],
+    ['Input tokens', count(data.input_tokens)], ['Output tokens', count(data.output_tokens)],
+    ['Cache write tokens', count(data.cache_creation_input_tokens)], ['Cache read tokens', count(data.cache_read_input_tokens)],
+  ];
+  return <><dl className="cu-request-facts">{fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {Boolean(data.error_type || data.error_message) && <Notice error>{text(data.error_type)}{data.error_message ? ': ' + text(data.error_message) : ''}</Notice>}
+    <details><summary>All request metadata</summary><pre>{pretty(data)}</pre></details></>;
 }

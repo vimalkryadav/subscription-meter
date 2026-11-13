@@ -42,15 +42,16 @@ public class AdminAuthFilter extends OncePerRequestFilter {
         if(path.startsWith("/admin/")) {
             String raw=PortalAuthFilter.cookie(request);
             if(raw!=null) {
-                try {
-                    String accountId=sessions.authenticate(raw);
-                    if(!accounts.byId(accountId).map(a->a.role().equals("admin")).orElse(false)) { reject(response,403);return; }
-                    boolean write=!Set.of("GET","HEAD","OPTIONS").contains(request.getMethod());
-                    if(write && (!"1".equals(request.getHeader("X-Portal-Request")) ||
-                            "cross-site".equals(request.getHeader("Sec-Fetch-Site")) ||
-                            !PortalTokens.equal(PortalTokens.csrf(raw),request.getHeader("X-CSRF-Token")))) { reject(response,403);return; }
-                    chain.doFilter(request,response);return;
-                } catch(ResponseStatusException e) { reject(response,401);return; }
+                String accountId;
+                try { accountId=sessions.authenticate(raw); }
+                catch(ResponseStatusException e) { reject(response,401);return; }
+                if(!accounts.byId(accountId).map(a->a.role().equals("admin")).orElse(false)) { reject(response,403);return; }
+                boolean write=!Set.of("GET","HEAD","OPTIONS").contains(request.getMethod());
+                if(write && (!"1".equals(request.getHeader("X-Portal-Request")) ||
+                        "cross-site".equals(request.getHeader("Sec-Fetch-Site")) ||
+                        !PortalTokens.equal(sessions.csrf(raw),request.getHeader("X-CSRF-Token")))) { reject(response,403);return; }
+                request.setAttribute(PortalAuthFilter.ACCOUNT,accountId);
+                chain.doFilter(request,response);return;
             }
             // Bootstrap access ends as soon as the first account is promoted.
             if(accounts.hasAdmin() || !PortalTokens.equal(admin,credential(request))) { reject(response,401);return; }

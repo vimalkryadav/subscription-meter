@@ -18,7 +18,7 @@ public class AdminActionAudit {
     }
     public void record(HttpServletRequest request, String action, String target, Map<String, ?> details) {
         String cookie = PortalAuthFilter.cookie(request);
-        String actor = cookie == null ? "bootstrap" : sessions.authenticate(cookie);
+        String actor = cookie == null ? "bootstrap" : sessions.actor(request);
         var safe = new LinkedHashMap<String, Object>(details);
         // A diagnostic client label, not an authentication assertion.
         safe.put("client", "mcp".equals(request.getHeader("X-Control-Usage-Client")) ? "mcp" : "dashboard_or_api");
