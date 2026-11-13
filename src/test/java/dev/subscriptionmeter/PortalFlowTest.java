@@ -221,4 +221,49 @@ class PortalFlowTest {
         }
         assertThatThrownBy(()->accounts.login("nonexistent-test-user","wrong")).hasMessageContaining("429");
     }
+    MvcResult persistentLogin(Login user) throws Exception {
+        return mvc.perform(post("/portal/api/login").header("X-Portal-Request","1").header("X-Portal-Persistent","1")
+            .contentType("application/json").content(JSON.writeValueAsString(Map.of("username",user.username(),"password","a strong test password")))).andReturn();
+    }
+    @Test void persistentHttpCookiesRotateAndLogoutRevokesFamily()throws Exception{
+        var user=register();var signed=persistentLogin(user);assertThat(signed.getResponse().getStatus()).isEqualTo(200);
+        var cookies=signed.getResponse().getHeaders("Set-Cookie");
+        assertThat(cookies).anySatisfy(value->assertThat(value).contains("meter_session=","Path=/;","Max-Age=900;","HttpOnly","Secure","SameSite=Strict"));
+        assertThat(cookies).anySatisfy(value->assertThat(value).contains("meter_refresh=","Path=/portal/api;","Max-Age=34560000;","HttpOnly","Secure","SameSite=Strict"));
+        Cookie access=signed.getResponse().getCookie("meter_session"),refresh=signed.getResponse().getCookie("meter_refresh");
+        String csrf=json(signed).path("csrfToken").asString();
+        assertThat(signed.getResponse().getContentAsString()).doesNotContain(access.getValue(),refresh.getValue());
+        jdbc.update("UPDATE portal_access_tokens SET expires_at=? WHERE token_hash=?",java.sql.Timestamp.from(Instant.now().minusSeconds(1)),PersistentSessionTest.hash(access.getValue()));
+        jdbc.update("UPDATE portal_refresh_tokens SET created_at=? WHERE token_hash=?",java.sql.Timestamp.from(Instant.now().minusSeconds(60)),PersistentSessionTest.hash(refresh.getValue()));
+        assertThat(mvc.perform(get("/portal/api/session").cookie(access)).andReturn().getResponse().getStatus()).isEqualTo(401);
+        var renewed=mvc.perform(post("/portal/api/refresh").cookie(refresh).header("X-Portal-Request","1")).andReturn();
+        assertThat(renewed.getResponse().getStatus()).isEqualTo(200);assertThat(renewed.getResponse().getHeader("Cache-Control")).isEqualTo("no-store");
+        assertThat(json(renewed).path("csrfToken").asString()).isEqualTo(csrf);
+        Cookie next=renewed.getResponse().getCookie("meter_session"),nextRefresh=renewed.getResponse().getCookie("meter_refresh");
+        assertThat(mvc.perform(get("/portal/api/session").cookie(next)).andReturn().getResponse().getStatus()).isEqualTo(200);
+        var out=mvc.perform(post("/portal/api/logout").cookie(next,nextRefresh).header("X-Portal-Request","1").header("X-CSRF-Token",csrf)).andReturn();
+        assertThat(out.getResponse().getStatus()).isEqualTo(200);
+        assertThat(out.getResponse().getHeaders("Set-Cookie")).allSatisfy(value->assertThat(value).contains("Max-Age=0"));
+        assertThat(mvc.perform(post("/portal/api/refresh").cookie(nextRefresh).header("X-Portal-Request","1")).andReturn().getResponse().getStatus()).isEqualTo(401);
+    }
+    @Test void refreshRejectsCrossSiteAndMissingHeaderWithoutRevokingValidLogin()throws Exception{
+        var signed=persistentLogin(register());Cookie cookie=signed.getResponse().getCookie("meter_refresh");
+        assertThat(mvc.perform(post("/portal/api/refresh").cookie(cookie)).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(post("/portal/api/refresh").cookie(cookie).header("X-Portal-Request","1").header("Sec-Fetch-Site","cross-site")).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(post("/portal/api/refresh").header("X-Portal-Request","1")).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(post("/portal/api/refresh").cookie(cookie).header("X-Portal-Request","1")).andReturn().getResponse().getStatus()).isEqualTo(200);
+    }
+    @Test void refreshedAdminSessionChecksCurrentRoleAndStableCsrf()throws Exception{
+        var user=register();var signed=persistentLogin(user);Cookie cookie=signed.getResponse().getCookie("meter_session");String csrf=json(signed).path("csrfToken").asString();
+        jdbc.update("UPDATE portal_accounts SET role='admin' WHERE id=?",user.id());
+        try{
+            assertThat(mvc.perform(get("/admin/accounts").cookie(cookie)).andReturn().getResponse().getStatus()).isEqualTo(200);
+            String path="/admin/members";
+            assertThat(mvc.perform(post(path).cookie(cookie).header("X-Portal-Request","1").header("X-CSRF-Token",PortalTokens.csrf(cookie.getValue())).contentType("application/json").content("{}")).andReturn().getResponse().getStatus()).isEqualTo(403);
+            var created=mvc.perform(post(path).cookie(cookie).header("X-Portal-Request","1").header("X-CSRF-Token",csrf).contentType("application/json").content("{\"name\":\"persistent-test\",\"rpm\":10,\"concurrency\":1}")).andReturn();
+            assertThat(created.getResponse().getStatus()).isEqualTo(201);members.revoke(json(created).path("member").path("id").asString());
+            jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",user.id());
+            assertThat(mvc.perform(get("/admin/accounts").cookie(cookie)).andReturn().getResponse().getStatus()).isEqualTo(403);
+        }finally{jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",user.id());}
+    }
 }

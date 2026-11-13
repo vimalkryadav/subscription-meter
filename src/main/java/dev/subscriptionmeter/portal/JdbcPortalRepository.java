@@ -32,17 +32,17 @@ public class JdbcPortalRepository implements AccountRepository, SessionRepositor
                 hash,accountId,Timestamp.from(now),Timestamp.from(expires));
     }
     public Optional<String> authenticate(String hash,Instant now,Instant cutoff) {
-        var ids=jdbc.queryForList("SELECT account_id FROM portal_sessions WHERE token_hash=? AND expires_at>? AND last_seen_at>?",
+        var ids=jdbc.queryForList("SELECT account_id FROM portal_sessions WHERE token_hash=? AND expires_at>? AND last_seen_at>? AND NOT EXISTS(SELECT 1 FROM portal_refresh_families f WHERE f.session_hash=portal_sessions.token_hash)",
                 String.class,hash,Timestamp.from(now),Timestamp.from(cutoff));
         if(ids.isEmpty()) return Optional.empty();
-        int touched=jdbc.update("UPDATE portal_sessions SET last_seen_at=? WHERE token_hash=? AND expires_at>? AND last_seen_at>?",
+        int touched=jdbc.update("UPDATE portal_sessions SET last_seen_at=? WHERE token_hash=? AND expires_at>? AND last_seen_at>? AND NOT EXISTS(SELECT 1 FROM portal_refresh_families f WHERE f.session_hash=portal_sessions.token_hash)",
                 Timestamp.from(now),hash,Timestamp.from(now),Timestamp.from(cutoff));
         return touched==1?Optional.of(ids.getFirst()):Optional.empty();
     }
     public void delete(String hash) { jdbc.update("DELETE FROM portal_sessions WHERE token_hash=?",hash); }
     public void prune(String accountId,Instant now,Instant cutoff) {
-        jdbc.update("DELETE FROM portal_sessions WHERE expires_at<=? OR last_seen_at<=?",Timestamp.from(now),Timestamp.from(cutoff));
-        var hashes=jdbc.queryForList("SELECT token_hash FROM portal_sessions WHERE account_id=? ORDER BY last_seen_at DESC",String.class,accountId);
+        jdbc.update("DELETE FROM portal_sessions WHERE (expires_at<=? OR last_seen_at<=?) AND NOT EXISTS(SELECT 1 FROM portal_refresh_families f WHERE f.session_hash=portal_sessions.token_hash)",Timestamp.from(now),Timestamp.from(cutoff));
+        var hashes=jdbc.queryForList("SELECT token_hash FROM portal_sessions WHERE account_id=? AND NOT EXISTS(SELECT 1 FROM portal_refresh_families f WHERE f.session_hash=portal_sessions.token_hash) ORDER BY last_seen_at DESC",String.class,accountId);
         for(int i=4;i<hashes.size();i++) delete(hashes.get(i));
     }
     private static final String REQUESTS="SELECT k.*,a.username,a.display_name FROM portal_key_requests k JOIN portal_accounts a ON a.id=k.account_id ";

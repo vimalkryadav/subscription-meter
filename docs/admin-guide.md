@@ -1,6 +1,6 @@
 # control-usage administrator guide
 
-This guide explains how to operate the deployed platform, investigate requests, interpret usage, manage access and use its MCP integration. It describes implemented behavior as of **8 November 2026**. It contains no credentials. Treat live dashboard timestamps and deployment manifests as the source for current state.
+This guide explains how to operate the deployed platform, investigate requests, interpret usage, manage access and use its MCP integration. It describes implemented behavior as of **13 November 2026**. It contains no credentials. Treat live dashboard timestamps and deployment manifests as the source for current state.
 
 ## Quick start
 
@@ -10,7 +10,7 @@ This guide explains how to operate the deployed platform, investigate requests, 
 4. Have the member claim their own token from the member portal. Send them the platform URL, not the upstream subscription credential.
 5. Open **Connection** and use its Claude Code settings. The public model base URL ends in `/gateway`.
 6. After a member sends a request, open **Request explorer**. Confirm their member ID, provider, response status, usage coverage and capture state.
-7. Open **Usage & value → Session & weekly limits**. Read account usage and member gateway shares separately. Note when the provider reading was observed and when its reset occurs.
+7. Open **Usage & value → Plan allowance**. Read account usage and member gateway shares separately. Note when the provider reading was observed and when its reset occurs.
 8. Read **MCP setup** in the guide selector before connecting an AI client. Admin actions are supported, but captured prompt/response access is separately enabled.
 
 For routine checks, no inference request is necessary. Dashboard refreshes, the operations streaming probe and MCP reporting tools do not call Claude for generation.
@@ -38,7 +38,9 @@ The production workspace is `bugpolice-control`. Runtime files are under `/home/
 
 Sign in at the root URL. Administrators can open `/manage`; signed-out users are redirected to login, and ordinary member accounts cannot open the admin console. Every admin API checks access independently of what the browser displays.
 
-Sessions use a host-only, Secure, HttpOnly, SameSite=Strict cookie. They expire after a 12-hour absolute lifetime or one hour of inactivity. Up to five sessions are retained per account. A dashboard refresh may update activity; it does not remove the absolute expiry. Logging out invalidates that session.
+Browser logins use host-only Secure, HttpOnly, SameSite=Strict access and refresh cookies. The access token lasts 15 minutes; the dashboard silently renews it when needed. The refresh login has no server-side idle or absolute timeout. Its browser cookie lasts up to 400 days and is renewed on rotation, so ordinary inactivity or closing and reopening the browser does not sign you out. Sign in once after this upgrade to obtain a refresh cookie; existing legacy logins keep their earlier expiry until then.
+
+Signing out invalidates that browser's entire login family, including its refresh token. **Accounts & sessions** shows these logins as **Until signed out**; revoking one or all sessions stops their access and refresh tokens. Clearing cookies, moving to a new tunnel hostname, administrator revocation or detected refresh-token reuse can require sign-in again. A temporary network/server error leaves the login intact and shows a retryable error. Private MCP/script logins retain their 12-hour absolute and one-hour idle limits.
 
 Authenticated mutations also require CSRF verification. The dashboard supplies this automatically. The MCP bridge obtains the CSRF token internally before an action; do not paste cookie or CSRF values into chat or terminal command arguments.
 
@@ -69,6 +71,10 @@ If the dashboard redirects unexpectedly, sign in again and reload it. A 403 usua
 | Operations | Health, projection, storage, backups and streaming diagnostics | Report age before interpreting status |
 | Connection | Member terminal settings and gateway capture/credential status | Current hostname and `/gateway` suffix |
 | Admin guide & MCP | Searchable operating instructions, setup and tool reference | Choose the relevant guide and section |
+
+Navigation groups monitoring, access management and workspace tools. Metrics separates Overview, Performance and Errors & capture. Usage & value separates Member usage, Plan allowance and Subscription expenses. Operations opens on Health; Capacity, Recovery and Stream diagnostics load when selected. Request detail fetches retained input/output only when you open that section. Search and status filters narrow member and access-request lists, while key creation and secondary metadata expand on demand.
+
+Loading sections display **Loading…** instead of sample charts or empty-state placeholders; report refreshes preserve their previous height to reduce jumps. Empty states appear only after a successful response confirms there is no matching data.
 
 Charts have tabular alternatives. App dropdowns support keyboard selection. Wide tables scroll horizontally on small screens. If a deployment happened while your tab was open, reload once to obtain the new frontend; an existing tab can continue using its earlier release assets.
 

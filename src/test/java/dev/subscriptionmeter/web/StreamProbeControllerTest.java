@@ -109,6 +109,7 @@ class StreamProbeControllerTest {
         var accounts=mock(AccountRepository.class);var sessions=mock(SessionService.class);when(accounts.hasAdmin()).thenReturn(true);
         for(String role:List.of("admin","member")) {
             when(sessions.authenticate(role)).thenReturn(role);
+            when(sessions.csrf(role)).thenReturn(PortalTokens.csrf(role));
             when(accounts.byId(role)).thenReturn(Optional.of(new Account(role,role,role,"unused",role)));
         }
         when(sessions.authenticate("expired")).thenThrow(new ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED));

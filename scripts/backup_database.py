@@ -33,17 +33,19 @@ MIN_FREE = BUDGET["min_free_bytes"]
 LEGACY_TABLES = ('members', 'portal_accounts', 'portal_sessions', 'portal_key_requests',
           'requests', 'request_details', 'request_events', 'gateway_access',
           'request_assessments', 'provider_quota_snapshots', 'subscription_invoices')
-TABLES = LEGACY_TABLES + ('audit_operations', 'audit_payload_parts', 'accounting_price_versions',
+V2_TABLES = LEGACY_TABLES + ('audit_operations', 'audit_payload_parts', 'accounting_price_versions',
                          'admin_action_log', 'control_schema_history', 'gateway_instances',
                          'coordination_locks', 'gateway_admissions', 'auth_attempts')
 
-def inventory_sql(version=2):
-    if version not in (1, 2): raise ValueError('Unsupported inventory version')
-    tables = LEGACY_TABLES if version == 1 else TABLES
+TABLES = V2_TABLES + ('portal_refresh_families', 'portal_access_tokens', 'portal_refresh_tokens')
+
+def inventory_sql(version=3):
+    if version not in (1, 2, 3): raise ValueError('Unsupported inventory version')
+    tables = {1: LEGACY_TABLES, 2: V2_TABLES, 3: TABLES}[version]
     query = 'SELECT json_build_object(' + ','.join(
         "'%s',(SELECT count(*) FROM %s)" % (name, name) for name in tables)
     query += ", 'adminCount',(SELECT count(*) FROM portal_accounts WHERE role='admin'), 'hypertables',(SELECT count(*) FROM timescaledb_information.hypertables), 'timescaleVersion',(SELECT extversion FROM pg_extension WHERE extname='timescaledb')"
-    if version == 2:
+    if version >= 2:
         query += ", 'schemaFingerprint',(SELECT md5(string_agg(name||':'||checksum,',' ORDER BY name)) FROM control_schema_history)"
         query += ", 'orphanPayloadParts',(SELECT count(*) FROM audit_payload_parts p WHERE NOT EXISTS(SELECT 1 FROM audit_operations o WHERE o.operation_id=p.operation_id))"
     return query + ')::text;'
@@ -139,7 +141,7 @@ def sql(container, query, database='meter', tcp=False):
                    '-U', 'meter', '-d', database] + (['-h', '127.0.0.1'] if tcp else []), input=query)
 
 
-def inventory(container, version=2):
+def inventory(container, version=3):
     return json.loads(sql(container, inventory_sql(version), tcp=True))
 
 
@@ -164,10 +166,15 @@ def snapshot(container):
         identifier = read_line(proc)
         if not re.fullmatch('[0-9A-Fa-f-]+', identifier):
             raise RuntimeError('Invalid snapshot identifier')
-        proc.stdin.write(INVENTORY_SQL + '\n')
+        # The release checkout can advance before its additive migration is applied.
+        # Choose the inventory from the same exported snapshot, preserving pre-upgrade backups.
+        proc.stdin.write("SELECT CASE WHEN to_regclass('portal_refresh_families') IS NULL THEN 2 ELSE 3 END;\n")
+        proc.stdin.flush()
+        version = int(read_line(proc))
+        proc.stdin.write(inventory_sql(version) + '\n')
         proc.stdin.flush()
         expected = json.loads(read_line(proc))
-        yield identifier, expected
+        yield identifier, expected, version
     finally:
         try:
             proc.stdin.close()
@@ -272,7 +279,7 @@ def backup():
     archive = STORE / ('backup-' + stamp + '-' + uuid.uuid4().hex[:8] + '.dump')
     partial = archive.with_suffix('.partial')
     try:
-        with snapshot(container) as (identifier, expected):
+        with snapshot(container) as (identifier, expected, version):
             with partial.open('xb') as handle:
                 os.chmod(partial, 0o600)
                 # Bound both output here and the DB process inside the source container.
@@ -286,7 +293,7 @@ def backup():
                 raise RuntimeError('Invalid archive header')
         os.replace(partial, archive)
         meta = {'createdAt': now(), 'image': image, 'sha256': digest(archive), 'databaseBytes': database_bytes,
-                'bytes': archive.stat().st_size, 'inventoryVersion': 2, 'inventory': expected}
+                'bytes': archive.stat().st_size, 'inventoryVersion': version, 'inventory': expected}
         write_json(archive.with_suffix('.json'), meta)
         update_status(lastSuccessAt=meta['createdAt'], lastAttemptState='ok', backupBytes=meta['bytes'])
         prune()

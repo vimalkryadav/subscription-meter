@@ -1,0 +1,10 @@
+.cu-request-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 20px; margin: 24px 0; }
+.cu-request-facts div { min-width: 0; }
+.cu-request-facts dt { color: var(--muted, #9ba9bf); font-size: .8rem; margin-bottom: 6px; }
+.cu-request-facts dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.cu-report-section { min-width: 0; }
+.cu-report-section[hidden] { display: none; }
+
+@media (max-width: 560px) {
+  #subscription-expense-form .cu-filter-grid, .cu-primary-filters, .cu-advanced-filters .cu-filter-grid { grid-template-columns: minmax(0, 1fr); }
+}

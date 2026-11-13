@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import InvestigationRegion from './InvestigationRegion';
 import { count, date, Notice, Panel, Table, useResource } from './ui';
 import { openRequestScope } from './search';
 import { quotaLabel } from './quota';
@@ -19,17 +20,16 @@ export default function QuotaUsage({ provider, revision }: { provider: string; r
   const resource = useResource<Report>('/admin/quota-usage?' + new URLSearchParams({ provider, refresh: String(revision) }));
   const [search, setSearch] = useState('');
   return <Panel title="Session & weekly limits">
-    <p className="cu-muted">Provider-reported account usage and member activity in the corresponding reset windows. These windows are independent of the report-period and member-ID filters above.</p>
+    <p className="cu-muted">Provider-reported account usage and member activity in the corresponding reset windows. These windows are independent of the filters in Member usage.</p>
     <Notice>Outside usage is unknown. A member’s gateway share measures reported tokens, not their percentage of Claude’s allowance. Model weighting, missing usage and activity outside this gateway prevent exact attribution.</Notice>
     <p className="cu-muted">The all-models weekly limit and Fable weekly limit are independent observations. Do not add their percentages. The Fable breakdown includes only recognized Fable requests.</p>
     <div className="cu-toolbar"><label>Find a member in quota windows<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or member ID" /></label><span className="cu-muted">Filtering keeps the all-member denominator.</span></div>
     <Notice error>{resource.error}</Notice>
-    {resource.loading && <p role="status">Loading quota windows…</p>}
-    {resource.data && <>
+    <InvestigationRegion loading={resource.loading}>{resource.data && <>
       {!resource.data.windows.length && <Notice>No trusted quota observations available for this provider. Session and weekly usage are unknown.</Notice>}
       <div className="cu-grid cu-quota-windows">{resource.data.windows.map(window => <QuotaWindow key={[window.provider, window.account, window.bucket].join('/')} window={window} search={search} />)}</div>
       <p className="cu-muted">Gateway totals read at {date(resource.data.generatedAt)}. Refresh reads stored data; it does not contact Claude. Recorded tokens include input, output, cache creation and cache reads. Partial records can change as audit processing catches up.</p>
-    </>}
+    </>}</InvestigationRegion>
   </Panel>;
 }
 

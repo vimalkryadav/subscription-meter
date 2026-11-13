@@ -6,6 +6,7 @@ import tempfile
 import sys
 import unittest
 from unittest.mock import patch
+from unittest.mock import MagicMock
 
 spec = importlib.util.spec_from_file_location('backup_database', Path(__file__).parents[1] / 'backup_database.py')
 backup = importlib.util.module_from_spec(spec)
@@ -147,12 +148,30 @@ class BackupTest(unittest.TestCase):
         self.assertNotIn('audit_operations', legacy)
         for table in ('audit_operations','audit_payload_parts','control_schema_history','accounting_price_versions','admin_action_log'):
             self.assertIn(table, current)
-        with self.assertRaises(ValueError): backup.inventory_sql(3)
+        self.assertNotIn('portal_refresh_tokens', current)
+        for table in ('portal_refresh_families','portal_access_tokens','portal_refresh_tokens'):
+            self.assertIn(table, backup.inventory_sql(3))
+        with self.assertRaises(ValueError): backup.inventory_sql(4)
         archive, meta = self.archive()
         with patch.object(backup,'output',return_value='owned-restore'),patch.object(backup,'docker'), \
                 patch.object(backup,'sql',return_value='1'),patch.object(backup,'inventory',return_value=meta['inventory']) as inv:
             backup.restore(archive,meta)
         inv.assert_called_once_with('owned-restore',1)
+
+    def test_snapshot_selects_pre_or_post_migration_inventory_inside_same_transaction(self):
+        for version in (2, 3):
+            process = MagicMock()
+            with patch.object(backup.subprocess, 'Popen', return_value=process), \
+                    patch.object(backup, 'read_line', side_effect=['00000001-00000002-1', str(version), '{"requests":12}']):
+                with backup.snapshot('owned-source') as (identifier, expected, actual):
+                    self.assertEqual(actual, version)
+                    self.assertEqual(expected, {'requests': 12})
+                    writes = [call.args[0] for call in process.stdin.write.call_args_list]
+                    self.assertIn('REPEATABLE READ READ ONLY', writes[0])
+                    self.assertIn("to_regclass('portal_refresh_families')", writes[1])
+                    self.assertEqual('portal_refresh_tokens' in writes[2], version == 3)
+            process.stdin.close.assert_called_once()
+            process.wait.assert_called_once()
 
     def test_capacity_warns_early_and_reserves_pending_archive_without_pruning(self):
         archive, meta = self.archive()

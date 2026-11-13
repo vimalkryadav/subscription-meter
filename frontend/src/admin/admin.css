@@ -57,3 +57,52 @@ body{min-width:320px}
 .cu-admin .cu-quota-window table{min-width:540px}
 .cu-admin .cu-quota-window td .cu-track{margin-top:8px}
 @media(max-width:1250px){.cu-admin .cu-quota-windows{grid-template-columns:1fr}}
+
+/* A stable, quiet shell; content remains the primary focus. */
+.cu-admin{--cu-panel:#111a24;--cu-border:#283544;--cu-muted:#a3b2c3}
+.cu-admin .cu-brand-group{display:flex;align-items:center;gap:14px}
+.cu-admin .cu-menu-toggle{display:none}
+.cu-admin .cu-sidebar{width:226px;padding:22px 14px}
+.cu-admin .cu-sidebar nav{gap:22px}
+.cu-admin .cu-nav-group{display:flex;flex-direction:column;gap:3px}
+.cu-admin .cu-nav-group .cu-eyebrow{font-size:10px;letter-spacing:1px;margin:0 10px 7px;text-transform:uppercase}
+.cu-admin .cu-sidebar nav a{min-height:42px;border:1px solid transparent}
+.cu-admin .cu-sidebar nav a[aria-current=page]{background:#1b2c40;border-color:#2d4560;color:#d5e6ff}
+.cu-admin .cu-sidebar-footer{padding:18px 10px 0;margin-top:26px}
+.cu-admin .cu-content{margin-left:226px;padding:34px clamp(20px,3vw,48px);max-width:1750px;min-height:calc(100vh - 56px)}
+.cu-admin .cu-heading{margin-bottom:28px;min-height:62px;align-items:center}
+.cu-admin .cu-heading h1{font-size:28px;margin-bottom:8px}
+.cu-admin .cu-heading p{font-size:13px;line-height:1.6}
+.cu-admin .cu-heading-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cu-admin .cu-panel{border-radius:10px;padding:22px;margin-bottom:22px}
+.cu-admin .cu-panel>h2{margin-bottom:18px;font-size:15px}
+.cu-admin .cu-loading{display:flex;align-items:center;justify-content:center;min-height:220px;color:var(--cu-muted);font-size:14px}
+.cu-admin .cu-panel .cu-loading{min-height:160px}
+.cu-admin .cu-search-field{flex:1;max-width:400px;min-width:180px}
+.cu-admin .cu-toolbar>.cu-select-field{min-width:180px}
+.cu-admin form.cu-bar{align-items:flex-end}
+.cu-admin .cu-view-actions{justify-content:space-between;margin:0 0 18px;min-height:38px}
+.cu-admin .cu-view-actions p{margin:0}
+.cu-admin td details{border:0;margin:0;padding:0}
+.cu-admin td details pre{max-width:440px;min-width:240px}
+@media(max-width:1000px) and (min-width:761px){.cu-admin .cu-sidebar{width:206px}.cu-admin .cu-content{margin-left:206px;padding:28px 20px}.cu-admin .cu-heading{flex-wrap:wrap}}
+@media(max-width:760px){
+ .cu-admin .cu-topbar{position:sticky;top:0;padding:12px 16px;gap:10px;min-height:64px}
+ .cu-admin .cu-brand-group{width:100%;justify-content:space-between}
+ .cu-admin .cu-account{width:100%;justify-content:space-between}
+ .cu-admin .cu-menu-toggle{display:inline-flex;min-height:36px}
+ .cu-admin .cu-sidebar{display:none;position:static;width:auto;padding:20px;background:#0f1822}
+ .cu-admin .cu-sidebar.is-open{display:flex}
+ .cu-admin .cu-sidebar nav{display:flex;flex-direction:column;overflow:visible;gap:22px}
+ .cu-admin .cu-nav-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+ .cu-admin .cu-nav-group .cu-eyebrow{grid-column:1/-1}
+ .cu-admin .cu-sidebar nav a{white-space:normal;padding:10px;font-size:13px}
+ .cu-admin .cu-sidebar-footer{display:flex}
+ .cu-admin .cu-content{margin:0;padding:26px 16px}
+ .cu-admin .cu-heading{min-height:0;gap:16px;margin-bottom:22px}
+ .cu-admin .cu-heading h1{font-size:25px}
+ .cu-admin .cu-panel{padding:16px;margin-bottom:16px}
+ .cu-admin .cu-toolbar{gap:12px}
+ .cu-admin .cu-toolbar>.cu-select-field{min-width:150px;flex:1}
+ .cu-admin .cu-loading{min-height:180px}
+}

@@ -25,7 +25,7 @@ jobs:
       - name: Verify PostgreSQL accounting query and reconciliation
         env:
           AUDIT_INTEGRATION: 'true'
-        run: mvn --batch-mode --no-transfer-progress -Dtest=AccountingPostgresTest,RequestSearchPostgresTest test
+        run: mvn --batch-mode --no-transfer-progress -Dtest=AccountingPostgresTest,RequestSearchPostgresTest,PersistentSessionPostgresTest test
       - name: Remove isolated PostgreSQL
         if: always()
         run: docker compose -p control-usage-test -f compose.audit-test.yaml down -v
