@@ -126,12 +126,24 @@ class DirectSetupTest(unittest.TestCase):
         self.assertIn('CLAUDE_CONFIG_DIR is set', result.stdout)
         self.assertNotIn('member key (hidden)', result.stderr)
 
+    def test_permissions_failure_is_reported_before_key_prompt(self):
+        from unittest.mock import patch
+        with patch.object(sys, 'argv', ['setup', '--url', 'https://example.com']), \
+                patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': ''}), \
+                patch.object(m, 'direct_files', side_effect=ValueError('fixture permissions denied')), \
+                patch.object(m, 'getpass') as prompt, patch('builtins.print') as output:
+            with self.assertRaises(SystemExit) as failure: m.main()
+            self.assertEqual(failure.exception.code, 1)
+            prompt.assert_not_called()
+            output.assert_called_once_with('Setup failed: fixture permissions denied')
+
     def assert_private_acl(self, path):
         script = r"""
 $ErrorActionPreference = 'Stop'
 $acl = Get-Acl -LiteralPath $env:CONTROL_USAGE_TEST_PATH
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if (-not $acl.AreAccessRulesProtected) { throw 'inherited' }
+if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid) { throw 'wrong owner' }
 $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
 if ($rules.Count -ne 2) { throw 'rule count' }
 foreach ($rule in $rules) {
@@ -205,3 +217,39 @@ foreach ($rule in $rules) {
                 m.secure_directory(folder)
                 m.windows_access(folder / 'empty-fixture', private=True)
             self.assert_private_acl(folder)
+
+    @unittest.skipUnless(os.name == 'nt' and os.environ.get('CONTROL_USAGE_ADMIN_OWNED_HOME'), 'CI-created administrator-owned fixture for a normal user')
+    def test_normal_user_repairs_prior_admin_setup_without_losing_settings(self):
+        home = Path(os.environ['CONTROL_USAGE_ADMIN_OWNED_HOME'])
+        settings = home / '.claude/settings.json'
+        original = json.loads(settings.read_text())
+        expected = 'S-1-5-32-544'
+        def owner(path):
+            result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+                '(Get-Acl -LiteralPath $env:CONTROL_USAGE_TEST_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value'],
+                env={**os.environ, 'CONTROL_USAGE_TEST_PATH': str(path)}, capture_output=True, text=True, check=True)
+            return result.stdout.strip()
+        state = home / '.config/control-usage'
+        for path in (settings.parent, settings, state, state / 'direct-setup.lock'):
+            self.assertEqual(owner(path), expected)
+        m.configure(home, 'https://example.com', self.key)
+        for path in (settings.parent, settings, state, state / 'direct-setup.lock', state / 'direct-setup-backup.json'):
+            self.assert_private_acl(path)
+        m.configure(home, 'https://new.example.com', 'sm_' + 'b' * 32)
+        m.remove(home)
+        self.assertEqual(json.loads(settings.read_text()), original)
+        self.assertEqual((home / '.claude/.credentials.json').read_text(), 'untouched fixture')
+
+    @unittest.skipUnless(os.name == 'nt' and os.environ.get('CONTROL_USAGE_ELEVATED_TEST') == '1', 'Elevated CI fixture ownership checks')
+    def test_administrator_owner_is_normalized_but_other_owner_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp).resolve() / 'private'; folder.mkdir()
+            subprocess.run(['icacls.exe', str(folder), '/setowner', '*S-1-5-32-544'], check=True, capture_output=True)
+            m.secure_directory(folder)
+            self.assert_private_acl(folder)
+            target = folder / 'foreign-owner.json'; target.write_text('{"keep":true}')
+            # LOCAL SERVICE is a distinct identity, never an accepted personal owner.
+            subprocess.run(['icacls.exe', str(target), '/setowner', '*S-1-5-19'], check=True, capture_output=True)
+            with self.assertRaisesRegex(ValueError, 'another Windows account'):
+                m.atomic(target, '{"replacement":true}', 0o600)
+            self.assertEqual(target.read_text(), '{"keep":true}')
