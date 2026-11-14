@@ -35,7 +35,12 @@ $ErrorActionPreference = 'Stop'
 $path = $env:CONTROL_USAGE_ACL_PATH
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $existing = Get-Acl -LiteralPath $path
-if ($existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 21 }
+$owner = $existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+# Elevated Windows processes can create files owned by BUILTIN\Administrators.
+# That is not a different personal account. Only normalize this well-known
+# owner, using access already held by the caller; never enable privileges,
+# invoke takeown, or change an arbitrary user's files.
+if ($owner -notin @($sid.Value, 'S-1-5-32-544')) { exit 21 }
 if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
     $directory = [System.IO.Directory]::Exists($path)
     $acl = $existing
@@ -54,11 +59,15 @@ if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
         $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, 'FullControl', $inherit, 'None', 'Allow')
         $acl.AddAccessRule($rule)
     }
+    if ($owner -ne $sid.Value) { $acl.SetOwner($sid) }
     # Persist only modified sections; Set-Acl can request SACL privileges when
     # applying a protected descriptor to a populated directory.
-    if ($directory) { [System.IO.Directory]::SetAccessControl($path, $acl) }
-    else { [System.IO.File]::SetAccessControl($path, $acl) }
+    try {
+        if ($directory) { [System.IO.Directory]::SetAccessControl($path, $acl) }
+        else { [System.IO.File]::SetAccessControl($path, $acl) }
+    } catch [System.UnauthorizedAccessException] { exit 22 }
     $check = Get-Acl -LiteralPath $path
+    if ($check.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 21 }
     if (-not $check.AreAccessRulesProtected) { throw 'inheritance' }
     foreach ($rule in $check.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
         if ($rule.IdentityReference.Value -notin @($sid.Value, 'S-1-5-18')) { throw 'unexpected access' }
@@ -75,8 +84,10 @@ if ($env:CONTROL_USAGE_ACL_PRIVATE -eq '1') {
                        timeout=30, check=True)
     except subprocess.CalledProcessError as error:
         if error.returncode == 21:
-            raise ValueError('Setup files must be owned by your Windows user. Run in a normal, non-administrator terminal.') from None
-        raise ValueError('Could not apply private Windows file permissions (code '+str(error.returncode)+').') from None
+            raise ValueError('Setup path belongs to another Windows account: '+str(path)+'. Use your own Windows profile.') from None
+        if error.returncode == 22:
+            raise ValueError('Windows denied permission to secure setup path: '+str(path)+'. Your account needs permission to change its owner and access rules.') from None
+        raise ValueError('Could not apply private Windows permissions to '+str(path)+' (code '+str(error.returncode)+').') from None
     except (OSError, subprocess.SubprocessError):
         raise ValueError('Could not verify private Windows file permissions. Use a local directory owned by your user.') from None
 
@@ -293,6 +304,11 @@ def main():
             return
         if not args.url: parser.error('--url is required')
         url = origin(args.url)
+        # Diagnose filesystem/ACL problems before requesting the member key.
+        if not args.separate_profile:
+            with direct_files(home) as (settings, backup):
+                read_settings(settings)
+                if backup.exists(): read_backup(backup)
         token = getpass('Platform member key (hidden): ').strip()
         if args.separate_profile:
             launcher = configure_profile(home, url, token)
