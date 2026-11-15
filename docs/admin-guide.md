@@ -99,7 +99,7 @@ Do not assume the account ID, access-request ID and member ID are interchangeabl
 
 **Rotation:** a portal member can rotate an active token. The old token stops working and the member ID is retained, preserving attribution across rotations. Revoked access blocks rotation until a new access request is approved.
 
-**Limits:** RPM is requests per minute; concurrency is simultaneous admitted requests. Supported member values are RPM 1–600 and concurrency 1–20. The deployment also has a global 80-request concurrency cap. These are gateway admission controls, not Claude allowance allocations, reservations or guarantees. Increasing them does not increase the underlying subscription limit.
+**Limits:** RPM is requests per minute; concurrency is simultaneous admitted requests. Supported member values are RPM 1–600 and concurrency 1–20. New members default to 120 RPM and 10 concurrent requests. There is no gateway-wide concurrent-request cap; each member is limited independently across all their terminals and gateway instances. The limiter counts admissions in a rolling 60-second window and rejects excess requests with HTTP 429 instead of queuing them. Infrastructure and audit-pipeline capacity checks still apply. These are gateway admission controls, not Claude allowance allocations, reservations or guarantees. Increasing them does not increase the underlying subscription limit.
 
 To edit limits, open **Edit limits** for the correct member, review the current values and save. The write checks the previous values to avoid silently overwriting another administrator's change. On a conflict, refresh and review the latest values. Limits apply to new admissions; they do not rotate keys, reactivate revoked members or terminate existing requests.
 

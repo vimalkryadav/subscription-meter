@@ -32,6 +32,21 @@ class CoordinationTest {
         green.acquire(member).close();
         assertThatThrownBy(()->blue.acquire(member)).hasMessageContaining("429");
     }
+    @Test void membersCanHoldMoreThanEightyRequestsAcrossInstances() {
+        var f=fixture();
+        var blue=new PostgresRequestLimiter(f.jdbc,f.tx,new InstanceLease(f.jdbc,"blue"),300);
+        var green=new PostgresRequestLimiter(f.jdbc,f.tx,new InstanceLease(f.jdbc,"green"),300);
+        var permits=new java.util.ArrayList<dev.subscriptionmeter.limits.RequestLimiter.Permit>();
+        try {
+            for(int user=0;user<9;user++) {
+                var member=new Member("member-"+user,"member","",true,120,10);
+                for(int request=0;request<10;request++) permits.add((request%2==0?blue:green).acquire(member));
+                assertThatThrownBy(()->green.acquire(member)).hasMessageContaining("429");
+            }
+            assertThat(f.jdbc.queryForObject("SELECT COUNT(*) FROM gateway_admissions WHERE closed=FALSE",Integer.class)).isEqualTo(90);
+        } finally { permits.forEach(dev.subscriptionmeter.limits.RequestLimiter.Permit::close); }
+        assertThat(f.jdbc.queryForObject("SELECT COUNT(*) FROM gateway_admissions WHERE closed=FALSE",Integer.class)).isZero();
+    }
     @Test void simultaneousAdmissionHasOneWinner() throws Exception {
         var f=fixture();
         var blue=new PostgresRequestLimiter(f.jdbc,f.tx,new InstanceLease(f.jdbc,"blue"),300);

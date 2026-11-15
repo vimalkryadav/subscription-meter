@@ -39,8 +39,6 @@ public class PostgresRequestLimiter implements RequestLimiter {
             String live=" FROM gateway_admissions a JOIN gateway_instances i ON a.owner_instance=i.id WHERE a.closed=FALSE AND i.lease_until>?";
             int active=jdbc.queryForObject("SELECT COUNT(*)"+live+" AND a.member_id=?",Integer.class,now,member.id());
             if(rpm>=member.rpm() || active>=member.concurrency()) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,"Member request limit reached");
-            int total=jdbc.queryForObject("SELECT COUNT(*)"+live,Integer.class,now);
-            if(total>=80) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Gateway at capacity");
             jdbc.update("INSERT INTO gateway_admissions(id,member_id,owner_instance,admitted_at,expires_at) VALUES(?,?,?,?,?)",id,member.id(),owner.id(),now,now+lifetime);
         });
         AtomicBoolean closed=new AtomicBoolean();
