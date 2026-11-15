@@ -200,8 +200,10 @@ The admin console also retains direct member creation for operator-managed keys.
 Only a token's
 SHA-256 hash and short display prefix are stored in PostgreSQL. The key has 256
 bits of random entropy. Revocation blocks new requests; in-flight requests may
-finish. RPM and concurrent-request limits apply to each member. There is also
-an 80-request global concurrency cap.
+finish. RPM and concurrent-request limits apply to each member, with defaults of
+120 requests per rolling minute and 10 concurrent requests. There is no
+gateway-wide concurrency cap. Infrastructure and audit-pipeline capacity checks
+still apply.
 
 Configure a terminal session after a reachable gateway endpoint is available:
 

@@ -6,7 +6,7 @@ import type { Row } from './ui';
 interface Member { id: string; name: string; keyPrefix: string; rpm: number; concurrency: number; active: boolean }
 export function Members() {
   const members = useResource<Member[]>('/admin/members'), create = useMutation(), revoke = useMutation();
-  const [name, setName] = useState(''), [rpm, setRpm] = useState('60'), [concurrency, setConcurrency] = useState('4');
+  const [name, setName] = useState(''), [rpm, setRpm] = useState('120'), [concurrency, setConcurrency] = useState('10');
   const [showCreate, setShowCreate] = useState(false), [search, setSearch] = useState(''), [state, setState] = useState('active');
   const visibleMembers = members.data?.filter(member => (state === 'all' || member.active === (state === 'active')) && (member.name + ' ' + member.keyPrefix).toLowerCase().includes(search.toLowerCase()));
   const [issued, setIssued] = useState(''), [copyMessage, setCopyMessage] = useState('');

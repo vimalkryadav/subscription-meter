@@ -72,6 +72,11 @@ def main():
         command(psql,input=sql)
         count=command(psql+["-t","-A"],input="SELECT COUNT(*) FROM control_schema_history;\n").stdout.strip()
         assert int(count)==len(list((ROOT/"deploy/migrations").glob("V[0-9]*__*.sql")))+(1 if args.timescale else 0),count
+        # Real PostgreSQL regression for existing approvals, higher custom limits,
+        # revocations and audit entries. Roll back every fixture row afterward.
+        fixture_sql=(ROOT/"scripts/tests/member_headroom_fixture.sql").read_text()
+        migration=(ROOT/"deploy/migrations/V007__member_admission_headroom.sql").read_text()
+        command(psql,input=fixture_sql.replace('-- APPLY_HEADROOM_MIGRATION',migration))
         if args.timescale:
             hypertables=command(psql+["-t","-A"],input="SELECT count(*) FROM timescaledb_information.hypertables;\n").stdout.strip()
             assert int(hypertables)==4,hypertables

@@ -59,7 +59,7 @@ CREATE INDEX IF NOT EXISTS sessions_account ON portal_sessions(account_id);
 CREATE TABLE IF NOT EXISTS portal_key_requests (
   id VARCHAR(36) PRIMARY KEY, account_id VARCHAR(36) NOT NULL UNIQUE REFERENCES portal_accounts(id),
   state VARCHAR(20) NOT NULL, reason VARCHAR(500) NOT NULL,
-  rpm INTEGER NOT NULL DEFAULT 60, concurrency_limit INTEGER NOT NULL DEFAULT 4,
+  rpm INTEGER NOT NULL DEFAULT 120, concurrency_limit INTEGER NOT NULL DEFAULT 10,
   member_id VARCHAR(36) REFERENCES members(id),
   requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   decided_at TIMESTAMP WITH TIME ZONE
