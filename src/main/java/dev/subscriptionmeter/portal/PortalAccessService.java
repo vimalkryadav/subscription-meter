@@ -27,6 +27,7 @@ public class PortalAccessService {
         request.ifPresent(r->{
             result.put("request",r);
             if(r.memberId()!=null) result.put("member",members.find(r.memberId()));
+            if(r.memberId()!=null && "active".equals(state(r))) members.currentKey(r.memberId()).ifPresent(key->result.put("token",key));
         });
         result.put("usage",requests.usage(accountId));
         return result;

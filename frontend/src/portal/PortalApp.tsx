@@ -5,7 +5,7 @@ import './portal.css';
 
 type AccessState = 'none' | 'pending' | 'approved' | 'active' | 'rejected' | 'revoked';
 interface Usage { model: string; state: string; requests: number; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number }
-interface Access { state: AccessState; request?: { rpm: number; concurrency: number }; member?: { rpm: number; concurrency: number }; usage: Usage[] }
+interface Access { state: AccessState; token?: string; request?: { rpm: number; concurrency: number }; member?: { rpm: number; concurrency: number }; usage: Usage[] }
 const descriptions: Record<AccessState, string> = {
   none: 'Tell your administrator what you need access for. Once approved, you can create your personal token.',
   pending: 'Your administrator is reviewing your request. Refresh to check for an update.',
@@ -32,6 +32,7 @@ export default function PortalApp() {
   const rotationTrigger = useRef<HTMLButtonElement>(null);
   const rotationWasOpen = useRef(false);
   const tokenHeading = useRef<HTMLHeadingElement>(null);
+  const focusToken = useRef(false);
   const gateway = location.origin + (location.protocol === 'https:' ? '/gateway' : '');
   const limits = access?.state === 'active' ? access.member ?? access.request : access?.request;
   const usage = access?.usage ?? [];
@@ -44,7 +45,7 @@ export default function PortalApp() {
     const data = await api<{ access: Access }>('/portal/api/access');
     if (expected !== generation.current) return;
     setAccess(data.access);
-    if (data.access.state !== 'active') setToken('');
+    setToken(data.access.state === 'active' ? data.access.token ?? '' : '');
   }
   async function action(work: () => Promise<void>) {
     if (busyRef.current) return;
@@ -78,7 +79,7 @@ export default function PortalApp() {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = overflow; };
   }, [rotate]);
-  useEffect(() => { if (token) tokenHeading.current?.focus(); }, [token]);
+  useEffect(() => { if (token && focusToken.current) { focusToken.current = false; tokenHeading.current?.focus(); } }, [token]);
   function closeRotation() { setRotate(false); }
   async function retrySession() {
     await action(async () => {
@@ -102,8 +103,8 @@ export default function PortalApp() {
   async function issue(rotating: boolean) {
     await action(async () => {
       const issued = await api<{ key: string }>(`/portal/api/token${rotating ? '/rotate' : ''}`, { method: 'POST', body: '{}' });
-      setToken(issued.key); setRotate(false);
-      // The one-time token must survive a failed follow-up refresh.
+      focusToken.current = true; setToken(issued.key); setRotate(false);
+      // Keep the new token visible even if the follow-up refresh fails.
       setAccess(current => current ? { ...current, state: 'active' } : current);
       await refresh();
     });
@@ -136,9 +137,9 @@ export default function PortalApp() {
           <section className="card access-card" aria-labelledby="access-title"><div className="row"><h2 id="access-title">{titles[access.state]}</h2><span className={`pill state-${access.state}`}>{access.state === 'none' ? 'Not requested' : access.state}</span></div><p>{descriptions[access.state]}</p>
             {limits && ['approved', 'active'].includes(access.state) && <p className="muted">{limits.rpm} requests/minute · {limits.concurrency} concurrent requests</p>}
             {['none', 'rejected', 'revoked'].includes(access.state) && <form className="access-request" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const reason = new FormData(form).get('reason'); void action(async () => { await api('/portal/api/key-requests', { method: 'POST', body: JSON.stringify({ reason }) }); form.reset(); await refresh(); }); }}><label htmlFor="reason">What will you use this access for?</label><textarea id="reason" name="reason" maxLength={500} required disabled={busy} placeholder="Describe your project or team." /><button disabled={busy}>{busy ? 'Loading…' : 'Request access'}</button></form>}
-            {access.state === 'approved' && <><button disabled={busy} onClick={() => issue(false)}>{busy ? 'Loading…' : 'Create my token'}</button><p className="muted">Your token is shown once. Keep it private.</p></>}
+            {access.state === 'approved' && <><button disabled={busy} onClick={() => issue(false)}>{busy ? 'Loading…' : 'Create my token'}</button><p className="muted">You can view your token here at any time. Keep it private.</p></>}
             {access.state === 'active' && <button ref={rotationTrigger} disabled={busy} className="secondary" onClick={() => { setError(''); setRotate(true); }}>Replace token</button>}
-            {token && <section className="token-reveal" aria-labelledby="token-title"><h3 id="token-title" ref={tokenHeading} tabIndex={-1}>Save your new token</h3><p>Shown once. Copy it now, then paste it at the setup command’s hidden prompt. Keep it private.</p><pre tabIndex={0} aria-label="Your one-time token">{token}</pre><div className="actions"><button onClick={() => copy(token)}>Copy token</button><button className="secondary" onClick={() => { setToken(''); rotationTrigger.current?.focus(); }}>I saved it · Hide</button></div></section>}
+            {access.state === 'active' && (token ? <section className="token-reveal" aria-labelledby="token-title"><h3 id="token-title" ref={tokenHeading} tabIndex={-1}>Your token</h3><p>Paste it at the setup command’s hidden prompt. Keep it private.</p><pre tabIndex={0} aria-label="Your token">{token}</pre><div className="actions"><button onClick={() => copy(token)}>Copy token</button></div></section> : <p className="muted">This token was created before tokens could be viewed again. Replace it to see your token here.</p>)}
             <details className="capture-details"><summary>Requests and responses are recorded</summary><p>Forwarded requests, responses, and tool events are recorded for administrator review, subject to capture limits and retention. Recognized credentials are redacted; project code and other content may be retained.</p></details>
           </section>
           {access.state === 'active' && <section className="card setup-card"><h2>Connect Claude Code</h2><ConnectionSetup gateway={gateway} /></section>}

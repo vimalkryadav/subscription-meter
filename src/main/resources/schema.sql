@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 CREATE INDEX IF NOT EXISTS requests_member_time ON requests(member_id, started_at);
 CREATE INDEX IF NOT EXISTS requests_time ON requests(started_at);
+ALTER TABLE members ADD COLUMN IF NOT EXISTS key_sealed TEXT;
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NOT NULL DEFAULT 'anthropic';
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS upstream_account VARCHAR(80) NOT NULL DEFAULT 'primary';
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS client_family VARCHAR(40) NOT NULL DEFAULT 'unknown';

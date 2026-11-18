@@ -87,10 +87,12 @@ class PortalFlowTest {
         assertThat(write(user,"/token",Map.of()).getResponse().getStatus()).isEqualTo(409);
         String rotated=json(write(user,"/token/rotate",Map.of())).path("key").asString();
         assertThat(members.authenticate(rotated).id()).isEqualTo(memberId);
+        assertThat(access.status(user.id()).get("token")).isEqualTo(rotated);
         assertThatThrownBy(()->members.authenticate(token)).hasMessageContaining("401");
         assertThat(jdbc.queryForObject("SELECT key_hash FROM members WHERE id=?",String.class,memberId)).doesNotContain(rotated);
         members.revoke(memberId); // Legacy admin revocation must also block portal rotation.
         assertThat(access.status(user.id()).get("state")).isEqualTo("revoked");
+        assertThat(access.status(user.id())).doesNotContainKey("token");
         assertThat(write(user,"/token/rotate",Map.of()).getResponse().getStatus()).isEqualTo(409);
         request(user);approve(id);
         String replacement=json(write(user,"/token",Map.of())).path("key").asString();

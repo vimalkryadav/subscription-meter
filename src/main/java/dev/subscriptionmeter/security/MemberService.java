@@ -11,14 +11,15 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class MemberService {
     private final MemberRepository members;
+    private final MemberKeyVault vault;
     private final SecureRandom random = new SecureRandom();
-    public MemberService(MemberRepository members) { this.members = members; }
+    public MemberService(MemberRepository members, MemberKeyVault vault) { this.members = members; this.vault = vault; }
     public record IssuedKey(Member member, String key) {}
     public IssuedKey create(String name, int rpm, int concurrency) {
         byte[] bytes = new byte[32]; random.nextBytes(bytes);
         String key = "sm_" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         Member m = new Member(UUID.randomUUID().toString(), name, key.substring(0, 10), true, rpm, concurrency);
-        members.add(m, hash(key));
+        members.add(m, hash(key), vault.seal(m.id(), key));
         return new IssuedKey(m, key);
     }
     public Member authenticate(String key) {
@@ -33,9 +34,13 @@ public class MemberService {
         Member old = find(id);
         byte[] bytes = new byte[32]; random.nextBytes(bytes);
         String key = "sm_" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        if(!members.replaceKey(id,hash(key),key.substring(0,10),rpm,concurrency,requireActive))
+        if(!members.replaceKey(id,hash(key),vault.seal(id,key),key.substring(0,10),rpm,concurrency,requireActive))
             throw new ResponseStatusException(HttpStatus.CONFLICT,"Access was revoked");
         return new IssuedKey(new Member(id,old.name(),key.substring(0,10),true,rpm,concurrency),key);
+    }
+    /** The member's current token, when it was issued after tokens became viewable. */
+    public Optional<String> currentKey(String id) {
+        return members.sealedKey(id).flatMap(sealed -> vault.open(id, sealed));
     }
     public void revoke(String id) {
         if (!members.revoke(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);

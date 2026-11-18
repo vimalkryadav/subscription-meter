@@ -15,9 +15,9 @@ public class JdbcMemberRepository implements MemberRepository {
         return new Member(rs.getString("id"), rs.getString("name"), rs.getString("key_prefix"),
                 rs.getBoolean("active"), rs.getInt("rpm"), rs.getInt("concurrency_limit"));
     }
-    public void add(Member m, String hash) {
-        jdbc.update("INSERT INTO members(id,name,key_hash,key_prefix,active,rpm,concurrency_limit) VALUES(?,?,?,?,?,?,?)",
-                m.id(), m.name(), hash, m.keyPrefix(), m.active(), m.rpm(), m.concurrency());
+    public void add(Member m, String hash, String sealed) {
+        jdbc.update("INSERT INTO members(id,name,key_hash,key_sealed,key_prefix,active,rpm,concurrency_limit) VALUES(?,?,?,?,?,?,?,?)",
+                m.id(), m.name(), hash, sealed, m.keyPrefix(), m.active(), m.rpm(), m.concurrency());
     }
     public Optional<Member> findActiveByKeyHash(String hash) {
         return jdbc.query("SELECT * FROM members WHERE key_hash=? AND active=TRUE", this::map, hash).stream().findFirst();
@@ -27,8 +27,12 @@ public class JdbcMemberRepository implements MemberRepository {
     public Optional<Member> findById(String id) {
         return jdbc.query("SELECT * FROM members WHERE id=?", this::map, id).stream().findFirst();
     }
-    public boolean replaceKey(String id, String hash, String prefix, int rpm, int concurrency, boolean requireActive) {
-        return jdbc.update("UPDATE members SET key_hash=?,key_prefix=?,rpm=?,concurrency_limit=?,active=TRUE WHERE id=? AND (active=TRUE OR ?=FALSE)",
-                hash,prefix,rpm,concurrency,id,requireActive)==1;
+    public boolean replaceKey(String id, String hash, String sealed, String prefix, int rpm, int concurrency, boolean requireActive) {
+        return jdbc.update("UPDATE members SET key_hash=?,key_sealed=?,key_prefix=?,rpm=?,concurrency_limit=?,active=TRUE WHERE id=? AND (active=TRUE OR ?=FALSE)",
+                hash,sealed,prefix,rpm,concurrency,id,requireActive)==1;
+    }
+    public Optional<String> sealedKey(String id) {
+        return jdbc.query("SELECT key_sealed FROM members WHERE id=? AND active=TRUE", (rs, row) -> rs.getString(1), id)
+                .stream().filter(Objects::nonNull).findFirst();
     }
 }
