@@ -19,7 +19,7 @@ class AuditPersistenceTest {
         var ds=new DriverManagerDataSource("jdbc:h2:mem:audit;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE","sa","");
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(ds);
         var jdbc=new JdbcTemplate(ds);
-        var member=new MemberService(new JdbcMemberRepository(jdbc)).create("Alice",60,4).member();
+        var member=new MemberService(new JdbcMemberRepository(jdbc),dev.subscriptionmeter.security.MemberKeyVault.forSecret("v".repeat(32))).create("Alice",60,4).member();
         var ledger=new JdbcRequestLedger(jdbc);
         var store=new JdbcAuditStore(jdbc);
         var context=new AuditContext("req",Instant.now(),"POST","/v1/messages",null,Map.of(),"127.0.0.1","HTTP/1.1");

@@ -157,7 +157,7 @@ the service. Persistent volumes are local to this workspace.
 3. The administrator signs in with their username and password, opens `/manage`, and
    approves or rejects the request. Approval sets RPM and concurrency limits.
 4. An approved user signs in and clicks **Get my auth token**. The gateway issues
-   a personal `ANTHROPIC_AUTH_TOKEN`, displays it once, and shows terminal settings.
+   a personal `ANTHROPIC_AUTH_TOKEN`, keeps it viewable in the portal, and shows terminal settings.
 5. Users can view their own 30-day usage, sign out, or rotate a lost token.
    Rotation invalidates the old token immediately and preserves member attribution.
    Admin revocation blocks both model access and token rotation; a new request

@@ -86,7 +86,7 @@ A normal onboarding sequence is:
 2. They submit **Request access** with a reason.
 3. You find the pending item under **Access requests**, verify the username and display name, and choose RPM and concurrency.
 4. Choose **Approve** or **Reject**. Only pending requests can be decided; a conflict means the state changed and should be refreshed.
-5. An approved member uses **Get my auth token** in their own portal. The full platform token is shown once.
+5. An approved member uses **Get my auth token** in their own portal. The full platform token stays visible in their portal while it is active. The gateway authenticates with a SHA-256 hash; a separate AES-GCM copy, keyed from the administrator secret, lets the portal show it again. Tokens issued before this change must be replaced once to become viewable, and changing the administrator secret has the same effect.
 6. They set their terminal variables using **Connection** and keep their token private.
 
 Typical states are `none`, `pending`, `approved`, `active`, `rejected` and `revoked`. Approved means the member may claim a token; active means a token has been issued. A rejected or revoked member can submit a new request. Approval is not a transfer of the upstream credential.
