@@ -33,6 +33,10 @@ public class JdbcRequestLedger implements RequestLedger {
     public void identify(String id,String provider,String account,String client) {
         jdbc.update("UPDATE requests SET provider=?,upstream_account=?,client_family=? WHERE id=?",provider,account,client,id);
     }
+    public void identify(String id,String provider,String account,String client,String session,String agent) {
+        jdbc.update("UPDATE requests SET provider=?,upstream_account=?,client_family=?,client_session_id=?,client_agent_id=? WHERE id=?",
+                provider,account,client,session,agent,id);
+    }
     public void markInterrupted() {
         // Recovery is fenced by per-instance leases, never a global boot-time update.
         if(owner!=null) owner.heartbeat();

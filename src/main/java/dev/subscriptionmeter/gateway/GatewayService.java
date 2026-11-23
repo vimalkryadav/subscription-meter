@@ -36,6 +36,17 @@ public class GatewayService {
         this.audits=audits; this.deployment=deployment; this.lease=lease;
     }
     private void requireLease() { if(lease!=null) lease.requireHealthy(); }
+    private static final java.util.regex.Pattern LABEL=java.util.regex.Pattern.compile("[A-Za-z0-9._:-]{1,100}");
+    /** A client-supplied grouping label; unauthenticated, so only a bounded safe shape is kept. */
+    static String clientLabel(AuditContext context,String name) {
+        if(context.headers()==null) return null;
+        for(var entry:context.headers().entrySet())
+            if(entry.getKey()!=null&&entry.getKey().equalsIgnoreCase(name)&&entry.getValue()!=null&&entry.getValue().size()==1) {
+                String value=entry.getValue().getFirst();
+                return value!=null&&LABEL.matcher(value).matches()?value:null;
+            }
+        return null;
+    }
 
     public void forward(Member member, AuditContext context, String model,
                         Map<String, String> headers, byte[] body, ResponseSink sink) {
@@ -56,7 +67,7 @@ public class GatewayService {
             UsageObserver observer = null;
             AuditCapture capture = null;
             try {
-              ledger.identify(id,protocol.id(),"primary",client);
+              ledger.identify(id,protocol.id(),"primary",client,clientLabel(context,"x-claude-code-session-id"),clientLabel(context,"x-claude-code-agent-id"));
               long auditStarted=System.nanoTime();
               try { capture=audits.begin(context,member.id(),body); }
               finally { metrics.phase(GatewayMetrics.Phase.REQUEST_AUDIT,auditStarted); }

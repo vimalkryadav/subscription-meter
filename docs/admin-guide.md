@@ -313,3 +313,14 @@ CONTROL_USAGE_DOCKER_SUDO=1 python3 scripts/backup_database.py --verify-latest
 **Usage complete** means the necessary usage components were observed; **capture available** means retained detail is accessible. Neither phrase alone proves an entire client conversation, local tool execution or provider-internal reasoning was recorded.
 
 **Admin MCP** means tools for operating this platform from an AI client. It is distinct from Claude Code's model connection through `/gateway`, and distinct from the disabled Codex provider adapter. The MCP guide documents its credentials, tools, action semantics and limitations.
+
+## Session summaries and the OpenAI API key
+
+**Sessions** (under Monitor) lists each member's Claude Code sessions from the last 1, 7 or 30 days. Each row shows a short summary of what the member worked on and a category. Requests are grouped by the `x-claude-code-session-id` header Claude Code sends. A session is summarized once it has been idle for 30 minutes, and summarized again if work resumes. Member traffic is never modified.
+
+The summarizer reads the newest main-conversation request already recorded for the session. It sends OpenAI only the member's prompts, short assistant replies, the names and targets of tools used, and the project folder name. System prompts, tool outputs and file contents are not sent. Requests are made with `store: false`. The member portal tells members about this.
+
+**OpenAI API** (under Manage) shows this week's spending against the weekly cap, which defaults to $100. It also holds the summary model and its prices. Weeks run Monday 00:00 to Monday 00:00 UTC. Each call reserves its worst-case cost under a database lock before it is sent, then settles to the actual cost. Once the cap is reached, no new calls are made until the cap is raised or the week resets. Calls with an unknown outcome, such as a timeout, keep counting their reservation. Changes are recorded in the admin action log. Set a budget limit on the key in OpenAI's dashboard as a second safeguard.
+
+The key is read from `secrets/openai-api-key` (mounted at `/run/secrets/openai-api-key` in each app slot) on every use, so adding or replacing it needs no restart. An empty file disables summaries. The key is never returned by any API or written to logs.
+
