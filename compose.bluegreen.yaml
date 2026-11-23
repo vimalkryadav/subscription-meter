@@ -15,10 +15,13 @@ services:
       RELEASE_ID: ${BLUE_RELEASE:-unconfigured}
       DEPLOY_TOKEN_FILE: /run/secrets/deploy-token
       METER_OPERATIONS_REPORT: /run/control-usage-operations/report.json
-      OPENAI_API_KEY_FILE: /run/secrets/openai-api-key
+      OPENAI_API_KEY_FILE: /run/secrets/openai-virtual-key
+      OPENAI_API_BASE_URL: http://openai-broker:8190
+      BROKER_URL: http://openai-broker:8190
+      BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker-admin-token
     volumes:
       - ./deploy/operations:/run/control-usage-operations:ro
-    secrets: [deploy-token, openai-api-key]
+    secrets: [deploy-token, openai-virtual-key, broker-admin-token]
     stop_grace_period: 370s
   app-green:
     extends:
@@ -32,12 +35,49 @@ services:
       RELEASE_ID: ${GREEN_RELEASE:-unconfigured}
       DEPLOY_TOKEN_FILE: /run/secrets/deploy-token
       METER_OPERATIONS_REPORT: /run/control-usage-operations/report.json
-      OPENAI_API_KEY_FILE: /run/secrets/openai-api-key
+      OPENAI_API_KEY_FILE: /run/secrets/openai-virtual-key
+      OPENAI_API_BASE_URL: http://openai-broker:8190
+      BROKER_URL: http://openai-broker:8190
+      BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker-admin-token
     volumes:
       - ./deploy/operations:/run/control-usage-operations:ro
-    secrets: [deploy-token, openai-api-key]
+    secrets: [deploy-token, openai-virtual-key, broker-admin-token]
     stop_grace_period: 370s
+  # The only container given the real OpenAI key. Shared service with its own lifecycle:
+  # app releases never recreate it; use scripts/deploy_broker.py. Not published on any host port.
+  openai-broker:
+    image: ${BROKER_IMAGE:-control-usage-unconfigured}
+    profiles: [broker]
+    restart: unless-stopped
+    entrypoint: [java, -Xmx384m, -Dloader.main=dev.subscriptionmeter.broker.BrokerMain,
+                 -cp, /app/app.jar, org.springframework.boot.loader.launch.PropertiesLauncher]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://timescaledb:5432/meter
+      SPRING_DATASOURCE_USERNAME: meter
+      SPRING_DATASOURCE_PASSWORD: ${DATABASE_PASSWORD:?Run scripts/bootstrap.py first}
+      OPENAI_API_KEY_FILE: /run/secrets/openai-api-key
+      BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker-admin-token
+      BROKER_PORT: "8190"
+      # OpenAI or an OpenAI-compatible gateway; set in the private .env. With or without trailing /v1.
+      OPENAI_UPSTREAM_URL: ${OPENAI_UPSTREAM_URL:-https://api.openai.com}
+    secrets: [openai-api-key, broker-admin-token]
+    healthcheck:
+      # bash, not /bin/sh (dash): /dev/tcp is a bash feature.
+      test: [CMD, bash, -c, "exec 3<>/dev/tcp/127.0.0.1/8190 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '\"ok\":true' <&3"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+    mem_limit: 512m
+    cpus: "0.5"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 310s
 secrets:
   deploy-token: {file: ./secrets/deploy-token}
-  # Optional: an empty file disables summaries and the API-key fallback.
+  # Real OpenAI key: mounted only into openai-broker. Empty disables OpenAI calls.
   openai-api-key: {file: ./secrets/openai-api-key}
+  # Broker virtual key used by the gateway (session summaries). Empty disables summaries.
+  openai-virtual-key: {file: ./secrets/openai-virtual-key}
+  broker-admin-token: {file: ./secrets/broker-admin-token}

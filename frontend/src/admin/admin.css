@@ -106,3 +106,4 @@ body{min-width:320px}
  .cu-admin .cu-toolbar>.cu-select-field{min-width:150px;flex:1}
  .cu-admin .cu-loading{min-height:180px}
 }
+.cu-admin .cu-section-title{font-size:18px;margin:28px 0 12px}

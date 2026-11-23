@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { categories, count, date, Heading, Loading, money, Notice, options, Panel, Segments, Select, Stat, Table, text, useMutation, useResource } from './ui';
+
+const Broker = lazy(() => import('./Broker'));
 
 interface SessionRow { memberId: string; memberName: string | null; sessionId: string; firstRequestAt: string; lastRequestAt: string; requestCount: number; status: string; summary: string | null; category: string | null; model: string | null; costUsd: number | null; lastError: string | null }
 interface SpendRow { createdAt: string; purpose: string; model: string; state: string; reservedUsd: number; costUsd: number | null; inputTokens: number | null; outputTokens: number | null }
@@ -19,7 +21,7 @@ export function Sessions() {
   const largest = top[0]?.[1] ?? 1;
   return <><Heading title="Sessions" subtitle="What members worked on, summarized from recorded Claude Code sessions after they go idle for 30 minutes."><button onClick={sessions.refresh} disabled={sessions.loading}>Refresh</button></Heading>
     <Notice error>{sessions.error}</Notice>
-    {api.data && !api.data.keyConfigured && <Notice>No OpenAI API key is configured, so new sessions are listed but not summarized. See <a href="#view/openai">OpenAI API</a>.</Notice>}
+    {api.data && !api.data.keyConfigured && <Notice>The gateway has no virtual key for summaries yet, so sessions are listed but not summarized. Set one up under <a href="#view/openai">OpenAI API</a>.</Notice>}
     {api.data && api.data.keyConfigured && !api.data.summariesEnabled && <Notice>Summaries are turned off. Turn them on under <a href="#view/openai">OpenAI API</a>.</Notice>}
     <div className="cu-toolbar"><Segments label="Period" value={days} onChange={setDays} values={[{ value: 1, label: '24 hours' }, { value: 7, label: '7 days' }, { value: 30, label: '30 days' }]} />
       <Select label="Member" value={member} onChange={setMember} items={[{ value: '', label: 'All members' }, ...members.map(([value, label]) => ({ value, label }))]} />
@@ -44,27 +46,29 @@ export function OpenAIApi() {
   const values = form ?? (data ? { weeklyCapUsd: String(data.weeklyCapUsd), summaryModel: data.summaryModel, inputUsdPerMTok: String(data.inputUsdPerMTok), cachedInputUsdPerMTok: String(data.cachedInputUsdPerMTok), outputUsdPerMTok: String(data.outputUsdPerMTok), summariesEnabled: String(data.summariesEnabled) } : null);
   const change = (name: string, value: string) => { setSaved(''); setForm({ ...values!, [name]: value }); };
   const used = data && Number(data.weeklyCapUsd) > 0 ? Math.min(100, 100 * Number(data.spentUsd) / Number(data.weeklyCapUsd)) : 100;
-  return <><Heading title="OpenAI API" subtitle="The OpenAI API key pays for session summaries and, later, the last-resort fallback. Spending stops at the weekly cap."><button onClick={status.refresh} disabled={status.loading}>Refresh</button></Heading>
+  return <><Heading title="OpenAI API" subtitle="One real OpenAI key, held only by the key broker. Callers use virtual keys with their own budgets and limits; every call is recorded."><button onClick={status.refresh} disabled={status.loading}>Refresh</button></Heading>
+    <Suspense fallback={<Loading />}><Broker /></Suspense>
+    <h2 className="cu-section-title">Session summaries</h2>
     <Notice error>{status.error || save.error}</Notice><Notice>{saved}</Notice>
     {status.loading && !data ? <Loading /> : data && values && <>
-      {!data.keyConfigured && <Notice>No API key is configured. Write the key to the server’s <code>secrets/openai-api-key</code> file; it is read on each use, so no restart is needed.</Notice>}
-      <div className="cu-grid cu-stats"><Stat title="Spent this week" value={money(data.spentUsd)} note={'Week of ' + date(data.weekStart) + ' (UTC, resets Monday)'} /><Stat title="Weekly cap" value={money(data.weeklyCapUsd)} note={'Changed by ' + data.updatedBy + ' · ' + date(data.updatedAt)} /><Stat title="Remaining" value={money(data.remainingUsd)} note={<span className="cu-track" style={{ display: 'block' }}><span style={{ width: used + '%' }} /></span>} /><Stat title="API key" value={data.keyConfigured ? 'Configured' : 'Missing'} note="The key itself is never shown." /></div>
-      <Panel title="Settings"><form className="cu-filter-grid" onSubmit={async event => {
+      {!data.keyConfigured && <Notice>The gateway has no virtual key for summaries. Create one above with purpose “Session summaries” and write it to the server’s <code>secrets/openai-virtual-key</code> file; it is read on each use, so no restart is needed.</Notice>}
+      <div className="cu-grid cu-stats"><Stat title="Summary spend this week" value={money(data.spentUsd)} note={'Gateway-side record · week of ' + date(data.weekStart)} /><Stat title="Summary limit" value={money(data.weeklyCapUsd)} note={'Inner limit for summaries · changed by ' + data.updatedBy} /><Stat title="Remaining" value={money(data.remainingUsd)} note={<span className="cu-track" style={{ display: 'block' }}><span style={{ width: used + '%' }} /></span>} /><Stat title="Virtual key" value={data.keyConfigured ? 'Configured' : 'Missing'} note="The key itself is never shown." /></div>
+      <Panel title="Summary settings"><form className="cu-filter-grid" onSubmit={async event => {
         event.preventDefault();
         try {
           await save.run('/admin/openai-api', 'PUT', { weeklyCapUsd: Number(values.weeklyCapUsd), summariesEnabled: values.summariesEnabled === 'true', summaryModel: values.summaryModel.trim(), inputUsdPerMTok: Number(values.inputUsdPerMTok), cachedInputUsdPerMTok: Number(values.cachedInputUsdPerMTok), outputUsdPerMTok: Number(values.outputUsdPerMTok) });
-          setForm(null); setSaved('Settings saved. The new cap applies immediately.'); status.refresh();
+          setForm(null); setSaved('Summary settings saved.'); status.refresh();
         } catch { /* error shown above */ }
       }}>
-        <label>Weekly cap (USD)<input required type="number" min="0" max="10000" step="0.01" value={values.weeklyCapUsd} onChange={event => change('weeklyCapUsd', event.target.value)} /></label>
+        <label>Weekly limit for summaries (USD)<input required type="number" min="0" max="10000" step="0.01" value={values.weeklyCapUsd} onChange={event => change('weeklyCapUsd', event.target.value)} /></label>
         <Select label="Session summaries" value={values.summariesEnabled} onChange={value => change('summariesEnabled', value)} items={[{ value: 'true', label: 'On' }, { value: 'false', label: 'Off' }]} />
         <label>Summary model<input required maxLength={100} pattern="[A-Za-z0-9._:\-]+" value={values.summaryModel} onChange={event => change('summaryModel', event.target.value)} /></label>
         <label>Input $ / 1M tokens<input required type="number" min="0" max="1000" step="0.000001" value={values.inputUsdPerMTok} onChange={event => change('inputUsdPerMTok', event.target.value)} /></label>
         <label>Cached input $ / 1M tokens<input required type="number" min="0" max="1000" step="0.000001" value={values.cachedInputUsdPerMTok} onChange={event => change('cachedInputUsdPerMTok', event.target.value)} /></label>
         <label>Output $ / 1M tokens<input required type="number" min="0" max="1000" step="0.000001" value={values.outputUsdPerMTok} onChange={event => change('outputUsdPerMTok', event.target.value)} /></label>
         <div className="cu-bar"><button className="cu-primary" disabled={save.busy || !form}>{save.busy ? 'Saving…' : 'Save settings'}</button>{form && <button type="button" onClick={() => setForm(null)}>Discard changes</button>}</div>
-      </form><p className="cu-muted">Prices must match OpenAI’s published rates for the model; the cap is enforced using them. Also set a budget limit on the key in OpenAI’s dashboard as a second safeguard. Changes are recorded in the admin action log.</p></Panel>
-      <Panel title="Recent API calls"><Table headings={['Time', 'Purpose', 'Model', 'Result', 'Tokens in / out', 'Cost']} empty={!data.recent.length}>{data.recent.map((row, index) => <tr key={index}><td>{date(row.createdAt)}</td><td>{row.purpose.replaceAll('_', ' ')}</td><td>{row.model}</td><td>{row.state}</td><td>{count(row.inputTokens)} / {count(row.outputTokens)}</td><td>{money(row.state === 'settled' ? row.costUsd : row.reservedUsd)}{row.state !== 'settled' && row.state !== 'failed' && <span className="cu-muted"> (reserved)</span>}</td></tr>)}</Table></Panel>
+      </form><p className="cu-muted">This inner limit applies only to summaries and is checked before the broker’s own budgets. Use the same prices as the broker for this model. Changes are recorded in the admin action log.</p></Panel>
+      <Panel title="Recent summary calls"><Table headings={['Time', 'Purpose', 'Model', 'Result', 'Tokens in / out', 'Cost']} empty={!data.recent.length}>{data.recent.map((row, index) => <tr key={index}><td>{date(row.createdAt)}</td><td>{row.purpose.replaceAll('_', ' ')}</td><td>{row.model}</td><td>{row.state}</td><td>{count(row.inputTokens)} / {count(row.outputTokens)}</td><td>{money(row.state === 'settled' ? row.costUsd : row.reservedUsd)}{row.state !== 'settled' && row.state !== 'failed' && <span className="cu-muted"> (reserved)</span>}</td></tr>)}</Table></Panel>
     </>}
   </>;
 }

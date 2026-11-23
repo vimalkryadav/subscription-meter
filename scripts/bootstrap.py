@@ -7,12 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 directory = ROOT / "secrets"
 directory.mkdir(exist_ok=True)
 directory.chmod(0o700)
-for name in ("admin-token", "metrics-token", "upstream-token", "deploy-token", "openai-api-key"):
+for name in ("admin-token", "metrics-token", "upstream-token", "deploy-token", "openai-api-key", "openai-virtual-key", "broker-admin-token"):
     path = directory / name
     if not path.exists():
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as file:
-            file.write("" if name in ("upstream-token", "openai-api-key") else secrets.token_urlsafe(48) + "\n")
+            file.write("" if name in ("upstream-token", "openai-api-key", "openai-virtual-key") else secrets.token_urlsafe(48) + "\n")
     # Docker mounts individual files into containers running as unprivileged users.
     # The parent directory is 0700, preventing other host users from reading them.
     path.chmod(0o644)
