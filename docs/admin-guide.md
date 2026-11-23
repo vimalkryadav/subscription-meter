@@ -322,5 +322,32 @@ The summarizer reads the newest main-conversation request already recorded for t
 
 **OpenAI API** (under Manage) shows this week's spending against the weekly cap, which defaults to $100. It also holds the summary model and its prices. Weeks run Monday 00:00 to Monday 00:00 UTC. Each call reserves its worst-case cost under a database lock before it is sent, then settles to the actual cost. Once the cap is reached, no new calls are made until the cap is raised or the week resets. Calls with an unknown outcome, such as a timeout, keep counting their reservation. Changes are recorded in the admin action log. Set a budget limit on the key in OpenAI's dashboard as a second safeguard.
 
-The key is read from `secrets/openai-api-key` (mounted at `/run/secrets/openai-api-key` in each app slot) on every use, so adding or replacing it needs no restart. An empty file disables summaries. The key is never returned by any API or written to logs.
+The gateway calls OpenAI through the key broker (below) using a **virtual key** read from `secrets/openai-virtual-key` (`/run/secrets/openai-virtual-key` in each app slot). The file is re-read on every use, so no restart is needed. An empty file disables summaries. The summaries limit on this page is an inner limit for summaries only. The broker's weekly cap covers all OpenAI spending.
+
+## OpenAI key broker
+
+The broker (`openai-broker`) is a separate container and the only one given the real OpenAI key, from `secrets/openai-api-key`. The gateway and any other caller receive **virtual keys** (`cuvk_…`). For each call the broker:
+
+1. Checks the virtual key: active, not expired, and allowed to use the requested model.
+2. Refuses anything that could bypass the budget: models without a price, hosted tools billed per use (only `function`/`custom` tools pass), background jobs, and stored-conversation references. It forces `store: false` and caps `max_output_tokens` at the key's limit.
+3. Checks the key's requests-per-minute limit, the key's weekly budget and the global weekly cap. It reserves the worst-case cost under a database lock, so concurrent calls cannot jointly overspend.
+4. Forwards the call with the real key, passes the response (including streamed events) back unchanged, and settles the actual cost from the reported usage. Calls whose usage is unknown keep their reservation.
+5. Records every call in `broker_calls`, including denied ones: key, purpose, member, model, tokens, cost, status, duration and OpenAI request ID.
+
+Manage it under **OpenAI API** in `/manage`. There you can set the global weekly cap (default $100, Monday 00:00 UTC), create, edit and revoke virtual keys (with weekly budget, RPM, allowed models, output-token ceiling, expiry and an optional member), edit model prices, and view recent calls. A new virtual key is shown once. Changes are recorded in both the broker's admin log and the gateway's admin action log. The gateway reaches the broker's admin API with `secrets/broker-admin-token`. The broker is not published on any host port.
+
+**What this isolation does and does not cover:** a compromised gateway can use or exhaust only the virtual keys and budgets it has; it cannot read the real key. Anyone with root on the host can still read any container's secrets. The broker shares the application's database login, so broker tables (key hashes, ledger) are readable with that login, but the real key is never stored in the database.
+
+### Deploying the broker
+
+App releases never recreate the broker. After a release that changes broker code has finished and is stable, deploy the broker from that release's image:
+
+```sh
+cd /home/coder/control-usage-deploy
+CONTROL_USAGE_DOCKER_SUDO=1 python3 scripts/deploy_broker.py --image <active release image digest> --sha <active release SHA>
+```
+
+The script takes the release lock, accepts only the active release's image and SHA (so migration V010 is already applied), waits for the container health check, and restores the previous image if the new one is unhealthy. In-flight calls get up to 300 seconds to finish when the old container stops.
+
+First-time setup: `secrets/openai-api-key` (real key, broker only), `secrets/broker-admin-token` (random) and `secrets/openai-virtual-key` (the summaries virtual key, created in `/manage` after the broker is running) must exist before the release, because the app slots mount them. `scripts/bootstrap.py` creates them, empty where appropriate, and never overwrites existing files.
 

@@ -16,7 +16,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class OpenAIApiKey {
     private static final int MAX_BYTES = 1024;
-    private static final Pattern SHAPE = Pattern.compile("sk-[A-Za-z0-9_-]{20,500}");
+    // A broker virtual key (cuvk_) in deployment; a direct sk- key is still accepted for local use.
+    private static final Pattern SHAPE = Pattern.compile("(sk-|cuvk_)[A-Za-z0-9_-]{20,500}");
     private final Path path;
 
     public OpenAIApiKey(@Value("${meter.openai-api.key-file:}") String path) {
