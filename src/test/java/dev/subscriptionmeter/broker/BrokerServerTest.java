@@ -184,6 +184,20 @@ class BrokerServerTest {
         assertThat(jdbc.queryForObject("SELECT key_hash FROM broker_keys", String.class)).isNotEqualTo(key).hasSize(64);
     }
 
+    @Test void upstreamBaseAcceptsOpenAIStyleUrls() {
+        assertThat(BrokerServer.responsesUri("https://api.openai.com")).hasToString("https://api.openai.com/v1/responses");
+        assertThat(BrokerServer.responsesUri("https://api.example.com/v1/")).hasToString("https://api.example.com/v1/responses");
+        assertThat(BrokerServer.responsesUri("http://127.0.0.1:9/v1")).hasToString("http://127.0.0.1:9/v1/responses");
+        for (String bad : List.of("http://api.example.com", "https://user:pw@api.example.com", "https://api.example.com/v1?x=1", "ftp://api.example.com"))
+            assertThatThrownBy(() -> BrokerServer.responsesUri(bad)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test void stateShowsUpstreamHostButNoSecrets() throws Exception {
+        var state = json(send("GET", "/admin/state", ADMIN, null));
+        assertThat(state.path("upstreamHost").asString()).isEqualTo("127.0.0.1");
+        assertThat(state.toString()).doesNotContain(REAL, ADMIN);
+    }
+
     @Test void longContextRatesApplyAboveThreshold() {
         var price = store.price("gpt-6-luna").orElseThrow();
         assertThat(BrokerStore.cost(price, new BrokerStore.Usage(272_000, 0, 0))).isEqualByComparingTo("0.0272");

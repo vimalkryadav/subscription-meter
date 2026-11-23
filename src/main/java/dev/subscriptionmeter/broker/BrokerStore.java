@@ -198,7 +198,7 @@ public final class BrokerStore {
 
     public boolean deletePrice(String model) { return jdbc.update("DELETE FROM broker_model_prices WHERE model=?", model) == 1; }
 
-    public Map<String, Object> state(Instant now, boolean realKeyConfigured) {
+    public LinkedHashMap<String, Object> state(Instant now, boolean realKeyConfigured) {
         var result = new LinkedHashMap<String, Object>();
         Instant start = weekStart(now);
         BigDecimal cap = globalCap(), spent = spent(now, null);

@@ -4,7 +4,7 @@ import { Confirm, count, date, Loading, money, Notice, Panel, Select, Stat, Tabl
 
 interface BrokerKey { id: string; name: string; purpose: string; memberId: string | null; prefix: string; active: boolean; weeklyBudgetUsd: number | null; rpm: number | null; allowedModels: string[]; maxOutputTokens: number; expiresAt: string | null; createdAt: string; createdBy: string; spentUsd: number; callsThisWeek: number }
 interface Price { model: string; inputUsdPerMTok: number; cachedInputUsdPerMTok: number; outputUsdPerMTok: number; longContextTokens: number | null; longInputUsdPerMTok: number | null; longOutputUsdPerMTok: number | null; updatedBy: string }
-interface BrokerState { realKeyConfigured: boolean; weeklyCapUsd: number; weekStart: string; spentUsd: number; remainingUsd: number; settings: { updatedAt: string; updatedBy: string }; keys: BrokerKey[]; prices: Price[] }
+interface BrokerState { realKeyConfigured: boolean; upstreamHost: string; weeklyCapUsd: number; weekStart: string; spentUsd: number; remainingUsd: number; settings: { updatedAt: string; updatedBy: string }; keys: BrokerKey[]; prices: Price[] }
 interface Call { id: string; createdAt: string; keyName: string | null; purpose: string | null; model: string | null; streaming: boolean; state: string; statusCode: number | null; reservedUsd: number; costUsd: number | null; inputTokens: number | null; outputTokens: number | null; durationMs: number | null; errorType: string | null }
 interface Member { id: string; name: string; active: boolean }
 
@@ -34,7 +34,7 @@ export default function Broker() {
       <Stat title="Spent this week (all keys)" value={money(data.spentUsd)} note={'Week of ' + date(data.weekStart) + ' · resets Monday 00:00 UTC'} />
       <Stat title="Weekly cap" value={money(data.weeklyCapUsd)} note={'Changed by ' + data.settings.updatedBy + ' · ' + date(data.settings.updatedAt)} />
       <Stat title="Remaining" value={money(data.remainingUsd)} note={<span className="cu-track" style={{ display: 'block' }}><span style={{ width: used + '%' }} /></span>} />
-      <Stat title="Real OpenAI key" value={data.realKeyConfigured ? 'Configured' : 'Missing'} note="Held only by the broker. Never shown." />
+      <Stat title="Real OpenAI key" value={data.realKeyConfigured ? 'Configured' : 'Missing'} note={'Held only by the broker. Never shown. Upstream: ' + data.upstreamHost} />
     </div>
     <Panel title="Weekly cap"><form className="cu-bar" onSubmit={event => { event.preventDefault(); void act(() => mutation.run('/admin/broker/settings', 'PUT', { weeklyCapUsd: Number(cap) }), 'Weekly cap saved. It applies immediately.').then(ok => { if (ok) setCap(null); }); }}>
       <label>Weekly cap for all OpenAI spending (USD)<input required type="number" min="0" max="10000" step="0.01" value={cap ?? String(data.weeklyCapUsd)} onChange={event => setCap(event.target.value)} /></label>
