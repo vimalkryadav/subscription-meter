@@ -109,6 +109,11 @@ class PortalFlowTest {
         assertThat(mvc.perform(post("/portal/api/token/rotate").cookie(a.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",a.csrf()).header("Sec-Fetch-Site","cross-site")).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(post("/portal/api/login").contentType("application/json").content("{}")).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(get("/admin/key-requests").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(get("/admin/sessions").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(get("/admin/openai-api").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(put("/admin/openai-api").servletPath("/admin/openai-api").cookie(a.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",a.csrf())
+                .contentType("application/json").content("{\"weeklyCapUsd\":1000}")).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(get("/admin/sessions")).andReturn().getResponse().getStatus()).isEqualTo(401);
         assertThat(mvc.perform(get("/admin/key-requests").header("Authorization","Bearer "+key)).andReturn().getResponse().getStatus()).isEqualTo(401);
         var own=mvc.perform(get("/portal/api/access").cookie(b.cookie()).param("accountId",a.id())).andReturn();
         assertThat(json(own).path("access").path("state").asString()).isEqualTo("none");
