@@ -39,9 +39,15 @@ public final class BrokerStore {
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
+    private final java.util.function.Supplier<Optional<String>> sealingSecret;
 
-    public BrokerStore(JdbcTemplate jdbc) {
+    /**
+     * @param sealingSecret the broker admin token. Virtual keys are kept as an AES-GCM sealed copy
+     *        (keyed from it) so administrators can view them again; authentication uses only the hash.
+     */
+    public BrokerStore(JdbcTemplate jdbc, java.util.function.Supplier<Optional<String>> sealingSecret) {
         this.jdbc = jdbc;
+        this.sealingSecret = sealingSecret;
         this.tx = new TransactionTemplate(new DataSourceTransactionManager(Objects.requireNonNull(jdbc.getDataSource())));
     }
 
@@ -171,9 +177,26 @@ public final class BrokerStore {
         byte[] bytes = new byte[32]; RANDOM.nextBytes(bytes);
         String key = "cuvk_" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         String id = UUID.randomUUID().toString(), prefix = key.substring(0, 12);
-        jdbc.update("INSERT INTO broker_keys(id,name,purpose,member_id,key_hash,key_prefix,weekly_budget_usd,rpm,allowed_models,max_output_tokens,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                id, name, purpose, memberId, hash(key), prefix, budget, rpm, models, maxOutputTokens, expiresAt == null ? null : Timestamp.from(expiresAt), actor);
+        String sealed = vault().map(v -> v.seal("broker:" + id, key)).orElse(null);
+        jdbc.update("INSERT INTO broker_keys(id,name,purpose,member_id,key_hash,key_prefix,key_sealed,weekly_budget_usd,rpm,allowed_models,max_output_tokens,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                id, name, purpose, memberId, hash(key), prefix, sealed, budget, rpm, models, maxOutputTokens, expiresAt == null ? null : Timestamp.from(expiresAt), actor);
         return new IssuedKey(id, key, prefix);
+    }
+
+    private Optional<dev.subscriptionmeter.security.MemberKeyVault> vault() {
+        return sealingSecret.get().filter(s -> s.length() >= 32).map(dev.subscriptionmeter.security.MemberKeyVault::forSecret);
+    }
+
+    /** Empty if the key is unknown, or was sealed under a different admin token. */
+    public Optional<String> reveal(String id) {
+        var rows = jdbc.queryForList("SELECT key_sealed FROM broker_keys WHERE id=?", String.class, id);
+        if (rows.isEmpty() || rows.getFirst() == null) return Optional.empty();
+        return vault().flatMap(v -> v.open("broker:" + id, rows.getFirst()));
+    }
+
+    public boolean exists(String id) {
+        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM broker_keys WHERE id=?", Integer.class, id);
+        return n != null && n > 0;
     }
 
     public boolean update(String id, String name, BigDecimal budget, Integer rpm, String models, int maxOutputTokens, Instant expiresAt, boolean active) {
@@ -214,7 +237,7 @@ public final class BrokerStore {
             var k = key(r);
             var row = new LinkedHashMap<String, Object>();
             row.put("id", k.id()); row.put("name", k.name()); row.put("purpose", k.purpose()); row.put("memberId", k.memberId());
-            row.put("prefix", k.prefix()); row.put("active", k.active()); row.put("weeklyBudgetUsd", k.weeklyBudgetUsd());
+            row.put("prefix", k.prefix()); row.put("active", k.active()); row.put("viewable", r.get("key_sealed") != null); row.put("weeklyBudgetUsd", k.weeklyBudgetUsd());
             row.put("rpm", k.rpm()); row.put("allowedModels", k.allowedModels()); row.put("maxOutputTokens", k.maxOutputTokens());
             row.put("expiresAt", k.expiresAt() == null ? null : k.expiresAt().toString());
             row.put("createdAt", instant(r.get("created_at")).toString()); row.put("createdBy", r.get("created_by"));

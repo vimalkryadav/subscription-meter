@@ -239,6 +239,14 @@ public final class BrokerServer {
                 if (keyId.length() > 36) throw new AdminInput.Bad("Invalid keyId");
                 json(exchange, 200, store.calls(keyId, limit)); return;
             }
+            if (method.equals("GET") && path.startsWith("/admin/keys/") && path.endsWith("/secret")) {
+                String id = path.substring("/admin/keys/".length(), path.length() - "/secret".length());
+                if (!id.matches("[0-9a-f-]{36}") || !store.exists(id)) { error(exchange, 404, "not_found", "Unknown key."); return; }
+                var key = store.reveal(id);
+                if (key.isEmpty()) { error(exchange, 409, "broker_key_not_viewable", "This key cannot be shown again; create a replacement."); return; }
+                store.log(actor(exchange), "broker.key.reveal", id, Map.of());
+                json(exchange, 200, Map.of("key", key.get())); return;
+            }
             if (method.equals("GET") && path.equals("/admin/log")) { json(exchange, 200, store.adminLog(AdminInput.integer(query.getOrDefault("limit", "50"), 1, 200, "limit"))); return; }
             byte[] raw = body(exchange, 64 * 1024);
             if (raw == null) throw new AdminInput.Bad("Body too large");
