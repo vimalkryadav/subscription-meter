@@ -58,6 +58,8 @@ services:
       OPENAI_API_KEY_FILE: /run/secrets/openai-api-key
       BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker-admin-token
       BROKER_PORT: "8190"
+      # OpenAI or an OpenAI-compatible gateway; set in the private .env. With or without trailing /v1.
+      OPENAI_UPSTREAM_URL: ${OPENAI_UPSTREAM_URL:-https://api.openai.com}
     secrets: [openai-api-key, broker-admin-token]
     healthcheck:
       # bash, not /bin/sh (dash): /dev/tcp is a bash feature.

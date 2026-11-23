@@ -32,9 +32,23 @@ public final class BrokerServer {
     public BrokerServer(BrokerStore store, Supplier<Optional<String>> realKey, Supplier<Optional<String>> adminToken,
                         String upstreamBase, java.time.Clock clock) {
         this.store = store; this.realKey = realKey; this.adminToken = adminToken; this.clock = clock;
-        this.upstream = URI.create(upstreamBase.replaceAll("/+$", "") + "/v1/responses");
+        this.upstream = responsesUri(upstreamBase);
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
     }
+
+    /** Accepts an OpenAI-style base with or without the trailing /v1 (e.g. OPENAI_BASE_URL). HTTPS required off-host. */
+    static URI responsesUri(String base) {
+        String trimmed = base.strip().replaceAll("/+$", "");
+        URI uri = URI.create(trimmed.endsWith("/v1") ? trimmed + "/responses" : trimmed + "/v1/responses");
+        String host = uri.getHost() == null ? "" : uri.getHost();
+        boolean local = host.equals("localhost") || host.equals("127.0.0.1") || host.equals("host.docker.internal") || !host.contains(".");
+        if (uri.getRawQuery() != null || uri.getRawUserInfo() != null || !("https".equals(uri.getScheme()) || ("http".equals(uri.getScheme()) && local)))
+            throw new IllegalArgumentException("Upstream must be an https URL without credentials or query");
+        return uri;
+    }
+
+    /** Host of the configured upstream, for display only. */
+    public String upstreamHost() { return upstream.getHost(); }
 
     public InetSocketAddress start(String bind, int port) throws IOException {
         server = HttpServer.create(new InetSocketAddress(bind, port), 64);
@@ -214,7 +228,11 @@ public final class BrokerServer {
         var query = query(exchange.getRequestURI().getRawQuery());
         Instant now = clock.instant();
         try {
-            if (method.equals("GET") && path.equals("/admin/state")) { json(exchange, 200, store.state(now, realKey.get().isPresent())); return; }
+            if (method.equals("GET") && path.equals("/admin/state")) {
+                var state = store.state(now, realKey.get().isPresent());
+                state.put("upstreamHost", upstreamHost());
+                json(exchange, 200, state); return;
+            }
             if (method.equals("GET") && path.equals("/admin/calls")) {
                 String keyId = query.getOrDefault("keyId", "");
                 int limit = AdminInput.integer(query.getOrDefault("limit", "100"), 1, 500, "limit");
