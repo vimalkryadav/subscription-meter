@@ -114,6 +114,10 @@ class PortalFlowTest {
         assertThat(mvc.perform(put("/admin/openai-api").servletPath("/admin/openai-api").cookie(a.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",a.csrf())
                 .contentType("application/json").content("{\"weeklyCapUsd\":1000}")).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(get("/admin/sessions")).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(get("/admin/broker/state").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(get("/admin/broker/state")).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(post("/admin/broker/keys").cookie(a.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",a.csrf())
+                .contentType("application/json").content("{\"name\":\"x\",\"purpose\":\"other\"}")).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(get("/admin/key-requests").header("Authorization","Bearer "+key)).andReturn().getResponse().getStatus()).isEqualTo(401);
         var own=mvc.perform(get("/portal/api/access").cookie(b.cookie()).param("accountId",a.id())).andReturn();
         assertThat(json(own).path("access").path("state").asString()).isEqualTo("none");
