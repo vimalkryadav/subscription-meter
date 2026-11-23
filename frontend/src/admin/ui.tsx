@@ -70,6 +70,29 @@ export function Segments<T extends string | number>({ label, values, value, onCh
   return <div className="cu-segments" role="group" aria-label={label}>{values.map(item => <button type="button" key={item.value} aria-pressed={value === item.value} onClick={() => onChange(item.value)}>{item.label}</button>)}</div>;
 }
 
+/** Multi-choice dropdown: searchable checkbox list. An empty selection shows `emptyLabel`. */
+export function MultiSelect({ label, values, onChange, items, emptyLabel = 'None selected', disabled = false }: { label: string; values: string[]; onChange: (values: string[]) => void; items: { value: string; label: string; note?: string }[]; emptyLabel?: string; disabled?: boolean }) {
+  const id = useId(), root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false), [filter, setFilter] = useState('');
+  useEffect(() => {
+    const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', close); return () => document.removeEventListener('pointerdown', close);
+  }, []);
+  const visible = items.filter(item => (item.label + ' ' + (item.note ?? '')).toLowerCase().includes(filter.toLowerCase()));
+  const summary = values.length === 0 ? emptyLabel : values.length <= 2 ? values.join(', ') : values.length + ' selected';
+  function toggle(value: string) { onChange(values.includes(value) ? values.filter(item => item !== value) : [...values, value]); }
+  return <div className="cu-select-field"><span id={id + '-label'}>{label}</span><div className="cu-select" ref={root}
+    onKeyDown={event => { if (event.key === 'Escape' && open) { event.preventDefault(); setOpen(false); trigger.current?.focus(); } }}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
+    <button type="button" ref={trigger} disabled={disabled} aria-haspopup="true" aria-expanded={open} aria-controls={id} aria-labelledby={id + '-label ' + id + '-value'} onClick={() => setOpen(!open)}><span id={id + '-value'}>{summary}</span><span aria-hidden="true">⌄</span></button>
+    {open && <div id={id} role="group" aria-labelledby={id + '-label'} className="cu-select-menu cu-multi-menu">
+      <input type="search" autoFocus aria-label={'Search ' + label} placeholder="Search" value={filter} onChange={event => setFilter(event.target.value)} />
+      <div className="cu-bar cu-multi-actions"><span className="cu-muted">{values.length} selected</span><button type="button" className="cu-link" disabled={!values.length} onClick={() => onChange([])}>Clear</button></div>
+      {visible.length ? visible.map(item => <label key={item.value} className="cu-multi-option"><input type="checkbox" checked={values.includes(item.value)} onChange={() => toggle(item.value)} /><span>{item.label}{item.note && <span className="cu-muted"> · {item.note}</span>}</span></label>) : <p className="cu-muted">No matching models.</p>}
+    </div>}
+  </div></div>;
+}
+
 /** Custom select with keyboard, typeahead, focus restoration and click-away support. */
 export function Select({ label, value, onChange, items, disabled = false }: { label: string; value: string; onChange: (value: string) => void; items: { value: string; label: string }[]; disabled?: boolean }) {
   const id = useId(), root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null);
