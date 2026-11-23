@@ -380,3 +380,31 @@ Accounting is unchanged. Requests record `provider=openai`, `upstream_account=co
 **Tier 3, member OpenAI keys.** On a member's first tier-3 request, the gateway creates a broker virtual key named "Fallback · <member>" with the default weekly budget (Routing page, $10). It keeps an AES-GCM sealed copy so it can present the key. Each key is visible and editable under OpenAI API like any other, and the global weekly cap still applies. When a member's budget is used up, they receive Anthropic's own rate-limit error.
 
 `count_tokens` requests on a fallback are answered with a local estimate. Routing status shown on the page (Claude and Codex availability, sessions on fallback) is per app instance and is relearned after a release.
+
+### Routing engine: deployments, health and strategies
+
+Routing works over a **deployment registry** (Routing → Deployments). Seeded deployments: the Claude subscription and the Codex login at **priority 1**, and the OpenAI API key (member keys via the broker) at **priority 2**. A lower priority number is always tried first, so the API key is used only when no priority-1 deployment can serve. For each new session the engine:
+
+1. **Filters** out deployments that are disabled, not connected, cooling down, out of quota until their reset, don't serve the mapped model (Codex's model list and the broker's price table are checked), or have a context window smaller than the request.
+2. **Orders** the rest: priority first. Deployments at their concurrency cap are busy, not unavailable: they go last within their priority, but never behind a lower priority. Next comes the session's current deployment, then the strategy:
+   - **Balanced:** quota headroom × weight × (1 − error rate) × load × latency
+   - **Claude first:** Claude subscriptions first, then the balanced score
+   - **Lowest latency:** time to first byte
+   - **Least busy:** requests in flight
+3. **Attempts** each in order, classifying every outcome:
+   - **Transient** (529, 500/502/503/504, connection errors, no response headers within the first-byte timeout): retried with backoff (0.5 s, 1.5 s, honouring short `retry-after`). After the configured number of failures within a minute, the deployment **cools down** for the configured time.
+   - **Quota** (429): the deployment is skipped until the provider's reported reset.
+   - **Context too long:** the next deployment is tried.
+   - **Other refusals:** returned to the member. A Codex-specific refusal tries the next deployment.
+
+   A request is only retried elsewhere before any byte reaches the member. Requests in flight count until the reply finishes streaming.
+
+Health (in flight, rolling time to first byte and error rate, cooldowns, quota blocks, last error) is tracked per app instance and shown on the page. It is published as Prometheus metrics: `meter_routing_attempts_total{deployment,outcome}`, `meter_routing_inflight{deployment}` and `meter_routing_first_byte{deployment}`.
+
+**Adding accounts.** Put the credential file in the server's `secrets/extra-credentials/`, mounted read-only into the app at `/run/control-usage-extra/`. Then use **Add a Claude or Codex account** with that path:
+
+- A **Claude subscription** file holds its OAuth token.
+- A **Codex** file holds an access token, which needs its own refresher, as for the primary login.
+
+Each account gets its own account label, so its quota observations, ledger attribution and health are tracked separately. Primary deployments can be disabled but not removed.
+

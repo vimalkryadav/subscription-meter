@@ -11,7 +11,8 @@ import org.springframework.stereotype.Component;
 public class RoutingSettings {
     public record Values(boolean gptModelsEnabled, boolean fallbackEnabled, boolean codexEnabled, boolean brokerEnabled,
                          String mapOpus, String mapSonnet, String mapHaiku, BigDecimal memberWeeklyBudgetUsd,
-                         String strategy, Instant updatedAt, String updatedBy) {
+                         String strategy, int allowedFails, int cooldownSeconds, int transientRetries, int firstByteTimeoutSeconds,
+                         Instant updatedAt, String updatedBy) {
         public ModelMapping mapping() { return new ModelMapping(mapOpus, mapSonnet, mapHaiku); }
         public boolean balanced() { return "balanced".equals(strategy); }
     }
@@ -37,7 +38,10 @@ public class RoutingSettings {
         v = new Values(Boolean.TRUE.equals(r.get("gpt_models_enabled")), Boolean.TRUE.equals(r.get("fallback_enabled")),
                 Boolean.TRUE.equals(r.get("codex_enabled")), Boolean.TRUE.equals(r.get("broker_enabled")),
                 (String) r.get("map_opus"), (String) r.get("map_sonnet"), (String) r.get("map_haiku"),
-                (BigDecimal) r.get("member_weekly_budget_usd"), (String) r.get("strategy"), instant(r.get("updated_at")), (String) r.get("updated_by"));
+                (BigDecimal) r.get("member_weekly_budget_usd"), (String) r.get("strategy"),
+                ((Number) r.get("allowed_fails")).intValue(), ((Number) r.get("cooldown_seconds")).intValue(),
+                ((Number) r.get("transient_retries")).intValue(), ((Number) r.get("first_byte_timeout_seconds")).intValue(),
+                instant(r.get("updated_at")), (String) r.get("updated_by"));
         cached = v; cachedAt = now;
         return v;
     }
@@ -45,9 +49,10 @@ public class RoutingSettings {
     public Values update(Values v, String actor) {
         jdbc.update("""
             UPDATE routing_settings SET gpt_models_enabled=?,fallback_enabled=?,codex_enabled=?,broker_enabled=?,map_opus=?,map_sonnet=?,map_haiku=?,
-            member_weekly_budget_usd=?,strategy=?,updated_at=?,updated_by=? WHERE id=1
+            member_weekly_budget_usd=?,strategy=?,allowed_fails=?,cooldown_seconds=?,transient_retries=?,first_byte_timeout_seconds=?,updated_at=?,updated_by=? WHERE id=1
             """, v.gptModelsEnabled(), v.fallbackEnabled(), v.codexEnabled(), v.brokerEnabled(), v.mapOpus(), v.mapSonnet(), v.mapHaiku(),
-                v.memberWeeklyBudgetUsd(), v.strategy(), Timestamp.from(Instant.now()), actor);
+                v.memberWeeklyBudgetUsd(), v.strategy(), v.allowedFails(), v.cooldownSeconds(), v.transientRetries(), v.firstByteTimeoutSeconds(),
+                Timestamp.from(Instant.now()), actor);
         cached = null;
         return get();
     }

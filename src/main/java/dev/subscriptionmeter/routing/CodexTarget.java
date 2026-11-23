@@ -24,13 +24,47 @@ public class CodexTarget implements ResponsesTarget {
     private final URI endpoint;
     private final RoutingState state;
     private final QuotaBalancer balancer;
+    private final String account;
+    private volatile Set<String> models;
+    private volatile Instant modelsAt = Instant.EPOCH;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public CodexTarget(@Value("${meter.codex.token-file:}") String tokenFile,
                        @Value("${meter.codex.url:https://chatgpt.com/backend-api/codex/responses}") String url, RoutingState state, QuotaBalancer balancer) {
+        this(tokenFile, url, state, balancer, "codex");
+    }
+
+    /** An additional Codex login (its own token file and account label). */
+    public CodexTarget(String tokenFile, String url, RoutingState state, QuotaBalancer balancer, String account) {
         this.tokenFile = tokenFile == null || tokenFile.isBlank() ? null : Path.of(tokenFile);
         this.endpoint = URI.create(url);
         this.state = state;
         this.balancer = balancer;
+        this.account = account;
+    }
+
+    /** Models this login offers (refreshed every 30 minutes); empty when not yet known. */
+    public Optional<Set<String>> models() {
+        Instant now = Instant.now();
+        if (models != null && modelsAt.plus(Duration.ofMinutes(30)).isAfter(now)) return Optional.of(models);
+        var credential = credential();
+        if (credential.isEmpty()) return Optional.ofNullable(models);
+        try {
+            String url = endpoint.toString().replaceAll("/responses$", "/models") + "?client_version=0.171.0";
+            var response = http.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(10))
+                    .header("Authorization", "Bearer " + credential.get().token()).header("chatgpt-account-id", credential.get().accountId())
+                    .header("originator", "codex_cli_rs").GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+            if (response.statusCode() == 200) {
+                var found = new HashSet<String>();
+                for (JsonNode m : AnthropicToResponses.JSON.readTree(response.body()).path("models")) {
+                    String slug = m.path("slug").asString(m.path("id").asString(""));
+                    if (!slug.isEmpty()) found.add(slug);
+                }
+                if (!found.isEmpty()) { models = Set.copyOf(found); modelsAt = now; }
+            }
+        } catch (IOException | RuntimeException e) { /* keep the previous list */ }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        return Optional.ofNullable(models);
     }
 
     static String bucket(Integer windowMinutes, String fallback) {
@@ -38,7 +72,7 @@ public class CodexTarget implements ResponsesTarget {
         return windowMinutes == 10080 ? "seven_day" : windowMinutes == 300 ? "five_hour" : fallback;
     }
 
-    public String account() { return "codex"; }
+    public String account() { return account; }
 
     record Credential(String token, String accountId) {}
 
@@ -87,9 +121,9 @@ public class CodexTarget implements ResponsesTarget {
         state.codexQuota(used, resetAt == null ? null : Instant.ofEpochSecond(resetAt), now);
         // Shared, persistent observations (also shown on the quota dashboard) drive balanced routing.
         String primary = bucket(intHeader(response, "x-codex-primary-window-minutes"), "primary");
-        if (primary != null && resetAt != null) balancer.recordCodex(primary, used, Instant.ofEpochSecond(resetAt), now);
+        if (primary != null && resetAt != null) balancer.recordCodex(account, primary, used, Instant.ofEpochSecond(resetAt), now);
         String second = bucket(intHeader(response, "x-codex-secondary-window-minutes"), "secondary");
-        if (second != null && secondaryReset != null) balancer.recordCodex(second, secondary, Instant.ofEpochSecond(secondaryReset), now);
+        if (second != null && secondaryReset != null) balancer.recordCodex(account, second, secondary, Instant.ofEpochSecond(secondaryReset), now);
         if (secondary != null && secondary >= 100) state.blockCodex(secondaryReset == null ? now.plus(Duration.ofMinutes(15)) : Instant.ofEpochSecond(secondaryReset));
         if (response.statusCode() == 429) {
             Integer after = intHeader(response, "x-codex-primary-reset-after-seconds");

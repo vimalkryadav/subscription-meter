@@ -48,6 +48,13 @@ public class RoutingState {
         if (sessions.size() < MAX_STICKY || sessions.containsKey(session)) sessions.put(session, new Assignment(provider, now.plus(STICKY)));
     }
 
+    /** Active sessions per deployment id. */
+    public Map<String, Long> sessionsByDeployment(Instant now) {
+        var counts = new HashMap<String, Long>();
+        sessions.values().stream().filter(a -> a.until().isAfter(now)).forEach(a -> counts.merge(a.provider(), 1L, Long::sum));
+        return counts;
+    }
+
     public Map<String, Object> status(Instant now) {
         var m = new LinkedHashMap<String, Object>();
         m.put("anthropicBlockedUntil", anthropicBlocked(now) ? anthropicBlockedUntil.toString() : null);
