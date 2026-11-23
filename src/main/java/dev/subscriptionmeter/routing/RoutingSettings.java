@@ -11,8 +11,9 @@ import org.springframework.stereotype.Component;
 public class RoutingSettings {
     public record Values(boolean gptModelsEnabled, boolean fallbackEnabled, boolean codexEnabled, boolean brokerEnabled,
                          String mapOpus, String mapSonnet, String mapHaiku, BigDecimal memberWeeklyBudgetUsd,
-                         Instant updatedAt, String updatedBy) {
+                         String strategy, Instant updatedAt, String updatedBy) {
         public ModelMapping mapping() { return new ModelMapping(mapOpus, mapSonnet, mapHaiku); }
+        public boolean balanced() { return "balanced".equals(strategy); }
     }
 
     private static final Duration TTL = Duration.ofSeconds(5);
@@ -36,7 +37,7 @@ public class RoutingSettings {
         v = new Values(Boolean.TRUE.equals(r.get("gpt_models_enabled")), Boolean.TRUE.equals(r.get("fallback_enabled")),
                 Boolean.TRUE.equals(r.get("codex_enabled")), Boolean.TRUE.equals(r.get("broker_enabled")),
                 (String) r.get("map_opus"), (String) r.get("map_sonnet"), (String) r.get("map_haiku"),
-                (BigDecimal) r.get("member_weekly_budget_usd"), instant(r.get("updated_at")), (String) r.get("updated_by"));
+                (BigDecimal) r.get("member_weekly_budget_usd"), (String) r.get("strategy"), instant(r.get("updated_at")), (String) r.get("updated_by"));
         cached = v; cachedAt = now;
         return v;
     }
@@ -44,9 +45,9 @@ public class RoutingSettings {
     public Values update(Values v, String actor) {
         jdbc.update("""
             UPDATE routing_settings SET gpt_models_enabled=?,fallback_enabled=?,codex_enabled=?,broker_enabled=?,map_opus=?,map_sonnet=?,map_haiku=?,
-            member_weekly_budget_usd=?,updated_at=?,updated_by=? WHERE id=1
+            member_weekly_budget_usd=?,strategy=?,updated_at=?,updated_by=? WHERE id=1
             """, v.gptModelsEnabled(), v.fallbackEnabled(), v.codexEnabled(), v.brokerEnabled(), v.mapOpus(), v.mapSonnet(), v.mapHaiku(),
-                v.memberWeeklyBudgetUsd(), Timestamp.from(Instant.now()), actor);
+                v.memberWeeklyBudgetUsd(), v.strategy(), Timestamp.from(Instant.now()), actor);
         cached = null;
         return get();
     }

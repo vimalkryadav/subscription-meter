@@ -190,3 +190,4 @@ CREATE TABLE IF NOT EXISTS member_broker_keys (
 );
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS served_model VARCHAR(100);
 INSERT INTO coordination_locks(name) SELECT 'member_broker_keys' WHERE NOT EXISTS (SELECT 1 FROM coordination_locks WHERE name='member_broker_keys');
+ALTER TABLE routing_settings ADD COLUMN IF NOT EXISTS strategy VARCHAR(20) NOT NULL DEFAULT 'claude_first';
