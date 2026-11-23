@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly check of the dedicated Codex login
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+Unit=control-usage-openai-refresh.service
+
+[Install]
+WantedBy=timers.target
