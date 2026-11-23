@@ -17,7 +17,8 @@ public class RoutingState {
     private volatile Instant anthropicBlockedUntil = Instant.EPOCH, codexBlockedUntil = Instant.EPOCH;
     private volatile Integer codexUsedPercent;
     private volatile Instant codexResetAt;
-    private final Map<String, Instant> sticky = new ConcurrentHashMap<>();
+    private record Assignment(String provider, Instant until) {}
+    private final Map<String, Assignment> sessions = new ConcurrentHashMap<>();
 
     public boolean anthropicBlocked(Instant now) { return anthropicBlockedUntil.isAfter(now); }
     public boolean codexBlocked(Instant now) { return codexBlockedUntil.isAfter(now); }
@@ -32,19 +33,19 @@ public class RoutingState {
         if (usedPercent != null && usedPercent >= 100) blockCodex(resetAt != null && resetAt.isAfter(now) ? resetAt : now.plus(Duration.ofMinutes(15)));
     }
 
-    public boolean stickyFallback(String session, Instant now) {
-        if (session == null) return false;
-        Instant until = sticky.get(session);
-        if (until == null) return false;
-        if (until.isBefore(now)) { sticky.remove(session); return false; }
-        sticky.put(session, now.plus(STICKY));
-        return true;
+    /** The provider ("claude", "codex" or "broker") that last served this session, if still active. */
+    public String assignment(String session, Instant now) {
+        if (session == null) return null;
+        Assignment a = sessions.get(session);
+        if (a == null) return null;
+        if (a.until().isBefore(now)) { sessions.remove(session); return null; }
+        return a.provider();
     }
 
-    public void stick(String session, Instant now) {
+    public void assign(String session, String provider, Instant now) {
         if (session == null) return;
-        if (sticky.size() >= MAX_STICKY) sticky.entrySet().removeIf(e -> e.getValue().isBefore(now));
-        if (sticky.size() < MAX_STICKY) sticky.put(session, now.plus(STICKY));
+        if (sessions.size() >= MAX_STICKY) sessions.entrySet().removeIf(e -> e.getValue().until().isBefore(now));
+        if (sessions.size() < MAX_STICKY || sessions.containsKey(session)) sessions.put(session, new Assignment(provider, now.plus(STICKY)));
     }
 
     public Map<String, Object> status(Instant now) {
@@ -53,7 +54,11 @@ public class RoutingState {
         m.put("codexBlockedUntil", codexBlocked(now) ? codexBlockedUntil.toString() : null);
         m.put("codexUsedPercent", codexUsedPercent);
         m.put("codexResetAt", codexResetAt == null ? null : codexResetAt.toString());
-        m.put("sessionsOnFallback", sticky.values().stream().filter(t -> t.isAfter(now)).count());
+        var active = sessions.values().stream().filter(a -> a.until().isAfter(now)).toList();
+        m.put("sessionsOnClaude", active.stream().filter(a -> a.provider().equals("claude")).count());
+        m.put("sessionsOnCodex", active.stream().filter(a -> a.provider().equals("codex")).count());
+        m.put("sessionsOnBroker", active.stream().filter(a -> a.provider().equals("broker")).count());
+        m.put("sessionsOnFallback", active.stream().filter(a -> !a.provider().equals("claude")).count());
         return m;
     }
 }

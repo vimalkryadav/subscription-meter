@@ -25,14 +25,16 @@ public class FallbackRouter {
     private final RoutingState state;
     private final List<ResponsesTarget> tiers;
     private final Supplier<Instant> clock;
+    private final java.util.function.Function<Instant, QuotaBalancer.Headroom> headroom;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public FallbackRouter(RoutingSettings settings, RoutingState state, CodexTarget codex, BrokerTarget broker) {
-        this(settings, state, List.of(codex, broker), Instant::now);
+    public FallbackRouter(RoutingSettings settings, RoutingState state, CodexTarget codex, BrokerTarget broker, QuotaBalancer balancer) {
+        this(settings, state, List.of(codex, broker), Instant::now, balancer::headroom);
     }
 
-    FallbackRouter(RoutingSettings settings, RoutingState state, List<ResponsesTarget> tiers, Supplier<Instant> clock) {
-        this.settings = settings; this.state = state; this.tiers = tiers; this.clock = clock;
+    FallbackRouter(RoutingSettings settings, RoutingState state, List<ResponsesTarget> tiers, Supplier<Instant> clock,
+                   java.util.function.Function<Instant, QuotaBalancer.Headroom> headroom) {
+        this.settings = settings; this.state = state; this.tiers = tiers; this.clock = clock; this.headroom = headroom;
     }
 
     /** A reply produced (or re-routed) by this router, carrying where it was actually served. */
@@ -90,28 +92,83 @@ public class FallbackRouter {
         boolean explicit = ModelMapping.openAIModel(model);
         if (explicit && !s.gptModelsEnabled())
             return anthropicError(400, "invalid_request_error", "OpenAI models are turned off by your administrator. Choose a Claude model.");
-        boolean divert = explicit || (s.fallbackEnabled() && (state.stickyFallback(session, now) || state.anthropicBlocked(now)));
+        if (!explicit && !s.fallbackEnabled()) return anthropic.send(method, path, outgoing, body);
 
+        String assigned = explicit ? null : state.assignment(session, now);
+        List<String> order = explicit ? openAIOrder(s, member, now) : order(s, assigned, member, now);
         if (counting) {
-            if (divert) return estimate(body);
+            if (order.isEmpty() || !order.getFirst().equals("claude")) return estimate(body);
             var reply = anthropic.send(method, path, outgoing, body);
-            if (reply.status() == 429 && s.fallbackEnabled()) { reply.close(); return estimate(body); }
+            if (reply.status() == 429) { reply.close(); return estimate(body); }
             return reply;
         }
-        if (divert) {
-            var routed = openAI(s, body, member, session, now);
-            if (routed != null && routed.status() == 200 && !explicit) state.stick(session, now);
-            if (routed != null) return routed;
-            return anthropicError(429, "rate_limit_error", explicit ? "No OpenAI capacity is available right now. Try again later or choose a Claude model."
-                    : "Claude and all fallback capacity are used up for now. Try again later.");
-        }
 
-        var reply = anthropic.send(method, path, outgoing, body);
-        if ((reply.status() != 429 && reply.status() != 529) || !s.fallbackEnabled()) return reply;
-        // Out of quota (or overloaded): remember until the reported reset, then fall back for this request.
-        byte[] refusal;
+        Routed claudeRefusal = null, lastFailure = null;
+        for (String provider : order) {
+            if (provider.equals("claude")) {
+                // History written by another provider lacks Claude's signed thinking blocks: send it without thinking.
+                byte[] request = assigned != null && !assigned.equals("claude") ? withoutThinking(body) : body;
+                var reply = anthropic.send(method, path, outgoing, request);
+                if (reply.status() == 429 || reply.status() == 529) { claudeRefusal = refusal(reply, now); continue; }
+                if (reply.status() < 400) state.assign(session, "claude", now);
+                return reply;
+            }
+            Routed result = attempt(tier(provider), s, body, member, session, now);
+            if (result == null) continue;
+            if (result.status() == 200) { if (!explicit) state.assign(session, provider, now); return result; }
+            lastFailure = result;
+            if (provider.equals("broker") && result.status() != 429) return result; // a broker refusal other than budget is final
+        }
+        if (claudeRefusal != null) return claudeRefusal; // every alternative is exhausted: Anthropic's own refusal
+        if (lastFailure != null) return lastFailure;
+        return anthropicError(429, "rate_limit_error", explicit ? "No OpenAI capacity is available right now. Try again later or choose a Claude model."
+                : "Claude, Codex and your OpenAI fallback budget are all used up for now. Try again later.");
+    }
+
+    /** Claude and Codex in preference order (skipping ones known to be out of quota), then the member's API key. */
+    List<String> order(RoutingSettings.Values s, String assigned, String member, Instant now) {
+        boolean claudeOk = !state.anthropicBlocked(now);
+        boolean codexOk = codexUsable(s, now);
+        String first;
+        if ("claude".equals(assigned) || "codex".equals(assigned)) first = assigned;
+        else first = s.balanced() ? headroom.apply(now).preferred() : "claude";
+        var order = new ArrayList<String>();
+        for (String p : first.equals("codex") ? List.of("codex", "claude") : List.of("claude", "codex"))
+            if (p.equals("claude") ? claudeOk : codexOk) order.add(p);
+        if (s.brokerEnabled() && member != null) order.add("broker");
+        return order;
+    }
+
+    private List<String> openAIOrder(RoutingSettings.Values s, String member, Instant now) {
+        var order = new ArrayList<String>();
+        if (codexUsable(s, now)) order.add("codex");
+        if (s.brokerEnabled() && member != null) order.add("broker");
+        return order;
+    }
+
+    private boolean codexUsable(RoutingSettings.Values s, Instant now) {
+        return s.codexEnabled() && !state.codexBlocked(now) && tier("codex").available();
+    }
+
+    private ResponsesTarget tier(String account) {
+        for (var t : tiers) if (t.account().equals(account)) return t;
+        throw new IllegalStateException("Unknown tier " + account);
+    }
+
+    static byte[] withoutThinking(byte[] body) {
+        try {
+            var root = (tools.jackson.databind.node.ObjectNode) AnthropicToResponses.JSON.readTree(body);
+            root.remove("thinking");
+            root.remove("context_management"); // its thinking-clearing edits require thinking to be enabled
+            return AnthropicToResponses.JSON.writeValueAsBytes(root);
+        } catch (RuntimeException e) { return body; }
+    }
+
+    /** Consumes Anthropic's refusal, remembering a quota rejection until the reported reset. */
+    private Routed refusal(UpstreamTransport.Reply reply, Instant now) throws IOException {
+        byte[] bytes;
         Map<String, List<String>> refusalHeaders = reply.headers();
-        try (reply) { refusal = reply.body().readNBytes(64 * 1024); }
+        try (reply) { bytes = reply.body().readNBytes(64 * 1024); }
         if (reply.status() == 429) {
             String status = first(refusalHeaders, "anthropic-ratelimit-unified-status");
             Long reset = number(first(refusalHeaders, "anthropic-ratelimit-unified-reset"));
@@ -119,11 +176,7 @@ public class FallbackRouter {
             if ("rejected".equalsIgnoreCase(status) || reset != null)
                 state.blockAnthropic(reset != null ? Instant.ofEpochSecond(reset) : now.plusSeconds(retry != null ? retry : 900));
         }
-        var routed = openAI(s, body, member, session, now);
-        if (routed != null && routed.status() == 200) { state.stick(session, now); return routed; }
-        if (routed != null && routed.status() != 429) return routed;
-        // Every fallback is exhausted: return Anthropic's own refusal unchanged.
-        return new Routed(reply.status(), refusalHeaders, new ByteArrayInputStream(refusal), null, null, null, null);
+        return new Routed(reply.status(), refusalHeaders, new ByteArrayInputStream(bytes), null, null, null, null);
     }
 
     private static String first(Map<String, List<String>> headers, String name) {
@@ -141,45 +194,38 @@ public class FallbackRouter {
         return json(200, Map.of("input_tokens", Math.max(1, body.length / 4)), null, null, null);
     }
 
-    /** Tries each enabled OpenAI tier in order. Returns null if none had capacity. */
-    Routed openAI(RoutingSettings.Values s, byte[] body, String member, String session, Instant now) throws InterruptedException {
-        Routed lastFailure = null;
-        for (var tier : tiers) {
-            boolean codex = tier.account().equals("codex");
-            if (codex && (!s.codexEnabled() || state.codexBlocked(now) || !tier.available())) continue;
-            if (!codex && (!s.brokerEnabled() || member == null)) continue;
-            AnthropicToResponses.Translation t;
-            try { t = AnthropicToResponses.translate(body, s.mapping(), session, !codex); }
-            catch (AnthropicToResponses.Unsupported e) { return anthropicError(400, "invalid_request_error", e.getMessage()); }
-            HttpResponse<InputStream> response;
-            try { response = tier.send(AnthropicToResponses.JSON.writeValueAsBytes(t.body()), member, session); }
-            catch (IOException e) { LOG.warn("Fallback tier {} unreachable ({})", tier.account(), e.getClass().getSimpleName()); continue; }
-            tier.observe(response);
-            int status = response.statusCode();
-            if (status == 200) {
-                var converter = new ResponsesToAnthropic(t.requestedModel(), t.toolNames());
-                String requestId = response.headers().firstValue("x-request-id").orElse(tier.account() + "-" + UUID.randomUUID());
-                var hs = new LinkedHashMap<String, List<String>>();
-                hs.put("request-id", List.of(requestId));
-                InputStream out;
-                if (t.clientStreaming()) {
-                    hs.put("content-type", List.of("text/event-stream"));
-                    out = ResponsesToAnthropic.streaming(response.body(), converter);
-                } else {
-                    hs.put("content-type", List.of("application/json"));
-                    try { out = new ByteArrayInputStream(ResponsesToAnthropic.aggregate(response.body(), converter)); }
-                    catch (IOException e) { LOG.warn("Fallback tier {} reply failed ({})", tier.account(), e.getClass().getSimpleName()); continue; }
-                }
-                return new Routed(200, hs, out, "openai", tier.account(), t.upstreamModel(), response.body());
+    /** One OpenAI tier: the translated reply, an Anthropic-format refusal, or null when unreachable. */
+    Routed attempt(ResponsesTarget tier, RoutingSettings.Values s, byte[] body, String member, String session, Instant now) throws InterruptedException {
+        boolean codex = tier.account().equals("codex");
+        AnthropicToResponses.Translation t;
+        try { t = AnthropicToResponses.translate(body, s.mapping(), session, !codex); }
+        catch (AnthropicToResponses.Unsupported e) { return anthropicError(400, "invalid_request_error", e.getMessage()); }
+        HttpResponse<InputStream> response;
+        try { response = tier.send(AnthropicToResponses.JSON.writeValueAsBytes(t.body()), member, session); }
+        catch (IOException e) { LOG.warn("Fallback tier {} unreachable ({})", tier.account(), e.getClass().getSimpleName()); return null; }
+        tier.observe(response);
+        int status = response.statusCode();
+        if (status == 200) {
+            var converter = new ResponsesToAnthropic(t.requestedModel(), t.toolNames());
+            String requestId = response.headers().firstValue("x-request-id").orElse(tier.account() + "-" + UUID.randomUUID());
+            var hs = new LinkedHashMap<String, List<String>>();
+            hs.put("request-id", List.of(requestId));
+            InputStream out;
+            if (t.clientStreaming()) {
+                hs.put("content-type", List.of("text/event-stream"));
+                out = ResponsesToAnthropic.streaming(response.body(), converter);
+            } else {
+                hs.put("content-type", List.of("application/json"));
+                try { out = new ByteArrayInputStream(ResponsesToAnthropic.aggregate(response.body(), converter)); }
+                catch (IOException e) { LOG.warn("Fallback tier {} reply failed ({})", tier.account(), e.getClass().getSimpleName()); return null; }
             }
-            byte[] error;
-            try (InputStream in = response.body()) { error = in.readNBytes(64 * 1024); } catch (IOException e) { error = new byte[0]; }
-            String message = providerMessage(error);
-            LOG.warn("Fallback tier {} refused with HTTP {}", tier.account(), status);
-            lastFailure = anthropicError(status == 429 ? 429 : status >= 500 ? 529 : status, errorType(status),
-                    (codex ? "Codex" : "OpenAI API") + " refused the request" + (message.isEmpty() ? "." : ": " + message));
-            // Codex problems of any kind fall through to the broker; a broker refusal is final.
+            return new Routed(200, hs, out, "openai", tier.account(), t.upstreamModel(), response.body());
         }
-        return lastFailure;
+        byte[] error;
+        try (InputStream in = response.body()) { error = in.readNBytes(64 * 1024); } catch (IOException e) { error = new byte[0]; }
+        String message = providerMessage(error);
+        LOG.warn("Fallback tier {} refused with HTTP {}", tier.account(), status);
+        return anthropicError(status == 429 ? 429 : status >= 500 ? 529 : status, errorType(status),
+                (codex ? "Codex" : "OpenAI API") + " refused the request" + (message.isEmpty() ? "." : ": " + message));
     }
 }

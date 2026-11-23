@@ -24,7 +24,10 @@ class FallbackRouterTest {
     FakeAnthropic anthropic;
     FallbackRouter router;
 
-    record Values(boolean gpt, boolean fallback, boolean codex, boolean broker) {}
+    record Values(boolean gpt, boolean fallback, boolean codex, boolean broker, String strategy) {
+        Values(boolean gpt, boolean fallback, boolean codex, boolean broker) { this(gpt, fallback, codex, broker, "claude_first"); }
+    }
+    QuotaBalancer.Headroom headroom = new QuotaBalancer.Headroom(null, null);
 
     static final class FakeTier implements ResponsesTarget {
         final String account; final List<String> bodies = new ArrayList<>(); int status = 200; String body = SSE_OK; boolean available = true;
@@ -41,9 +44,9 @@ class FallbackRouterTest {
     }
 
     static final class FakeAnthropic implements UpstreamTransport {
-        final List<Map<String, String>> calls = new ArrayList<>(); int status = 200; Map<String, List<String>> headers = Map.of("content-type", List.of("application/json"));
+        final List<Map<String, String>> calls = new ArrayList<>(); final List<String> bodies = new ArrayList<>(); int status = 200; Map<String, List<String>> headers = Map.of("content-type", List.of("application/json"));
         public Reply send(String method, String path, Map<String, String> h, byte[] body) {
-            calls.add(h);
+            calls.add(h); bodies.add(new String(body, StandardCharsets.UTF_8));
             byte[] bytes = (status == 200 ? "{\"type\":\"message\"}" : "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"}}").getBytes();
             return new Reply() {
                 public int status() { return status; }
@@ -76,10 +79,10 @@ class FallbackRouterTest {
         RoutingSettings settings = new RoutingSettings(null) {
             @Override public RoutingSettings.Values get() {
                 return new RoutingSettings.Values(values.gpt(), values.fallback(), values.codex(), values.broker(), "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6-luna",
-                        BigDecimal.TEN, Instant.EPOCH, "test");
+                        BigDecimal.TEN, values.strategy(), Instant.EPOCH, "test");
             }
         };
-        router = new FallbackRouter(settings, state, List.of(codex, broker), now::get);
+        router = new FallbackRouter(settings, state, List.of(codex, broker), now::get, at -> headroom);
     }
 
     static Map<String, String> headers(String session) {
@@ -176,6 +179,59 @@ class FallbackRouterTest {
         var off = router.route(anthropic, "POST", "/v1/messages", headers("s1"), request("gpt-6.2-astra", true));
         assertThat(off.status()).isEqualTo(400);
         assertThat(body(off)).contains("turned off");
+    }
+
+    static byte[] thinkingRequest(String model) {
+        return ("{\"model\":\"" + model + "\",\"max_tokens\":100,\"stream\":true,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":2000},"
+                + "\"context_management\":{\"edits\":[{\"type\":\"clear_thinking_20251015\"}]},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}").getBytes();
+    }
+
+    @Test void balancedSendsNewSessionsToTheProviderWithMoreQuotaLeftAndKeepsThem() throws Exception {
+        values = new Values(true, true, true, true, "balanced");
+        headroom = new QuotaBalancer.Headroom(70.0, 20.0); // Claude 70% used, Codex 20% used
+        assertThat(router.route(anthropic, "POST", "/v1/messages", headers("s1"), request("claude-opus-5-5", true)).routedAccount()).isEqualTo("codex");
+        assertThat(anthropic.calls).isEmpty();
+        headroom = new QuotaBalancer.Headroom(30.0, 60.0); // now Claude has more left
+        assertThat(router.route(anthropic, "POST", "/v1/messages", headers("s2"), request("claude-opus-5-5", true)).routedProvider()).isNull();
+        // Existing sessions keep their provider regardless of the new balance.
+        assertThat(router.route(anthropic, "POST", "/v1/messages", headers("s1"), request("claude-opus-5-5", true)).routedAccount()).isEqualTo("codex");
+        assertThat(anthropic.calls).hasSize(1);
+        assertThat(state.status(now.get())).containsEntry("sessionsOnCodex", 1L).containsEntry("sessionsOnClaude", 1L);
+        headroom = new QuotaBalancer.Headroom(50.0, 50.0); // ties stay on Claude
+        assertThat(router.route(anthropic, "POST", "/v1/messages", headers("s3"), request("claude-opus-5-5", true)).routedProvider()).isNull();
+    }
+
+    @Test void aCodexSessionMovesToClaudeWithoutThinkingBeforeTheApiKeyIsUsed() throws Exception {
+        values = new Values(true, true, true, true, "balanced");
+        headroom = new QuotaBalancer.Headroom(80.0, 10.0);
+        router.route(anthropic, "POST", "/v1/messages", headers("s1"), thinkingRequest("claude-opus-5-5"));
+        assertThat(codex.bodies).hasSize(1);
+        codex.status = 429; codex.body = "{\"error\":{\"message\":\"usage limit\"}}";
+        var reply = router.route(anthropic, "POST", "/v1/messages", headers("s1"), thinkingRequest("claude-opus-5-5"));
+        assertThat(reply.routedProvider()).isNull(); // served by Claude
+        assertThat(anthropic.bodies.getFirst()).doesNotContain("thinking", "context_management").contains("claude-opus-5-5");
+        assertThat(broker.bodies).isEmpty();
+        // Claude itself keeps thinking for sessions it has always served.
+        router.route(anthropic, "POST", "/v1/messages", headers("s9"), thinkingRequest("claude-opus-5-5"));
+        assertThat(anthropic.bodies.getLast()).contains("thinking");
+    }
+
+    @Test void theApiKeyIsUsedOnlyWhenClaudeAndCodexAreBothUnavailable() throws Exception {
+        values = new Values(true, true, true, true, "balanced");
+        headroom = new QuotaBalancer.Headroom(10.0, 90.0);
+        anthropic.status = 429;
+        anthropic.headers = Map.of("anthropic-ratelimit-unified-status", List.of("rejected"), "anthropic-ratelimit-unified-reset", List.of("1795611600"));
+        // Claude refuses: Codex serves (not the API key).
+        assertThat(router.route(anthropic, "POST", "/v1/messages", headers("s1"), request("claude-opus-5-5", true)).routedAccount()).isEqualTo("codex");
+        assertThat(broker.bodies).isEmpty();
+        // Codex also runs out: only now the member's API key serves.
+        codex.status = 429;
+        assertThat(router.route(anthropic, "POST", "/v1/messages", headers("s2"), request("claude-opus-5-5", true)).routedAccount()).isEqualTo("broker");
+        // Both are known to be out: the next new session goes straight to the API key without wasted calls.
+        anthropic.calls.clear(); codex.bodies.clear();
+        assertThat(router.route(anthropic, "POST", "/v1/messages", headers("s3"), request("claude-opus-5-5", true)).routedAccount()).isEqualTo("broker");
+        assertThat(anthropic.calls).isEmpty();
+        assertThat(codex.bodies).isEmpty();
     }
 
     @Test void claudeCodeQueryStringsAreRoutedLikeThePlainPath() throws Exception {

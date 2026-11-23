@@ -354,7 +354,14 @@ First-time setup: `secrets/openai-api-key` (real key, broker only), `secrets/bro
 
 ## Routing: Claude → Codex → OpenAI API key
 
-Members keep using `claude`. The gateway can serve Claude Code from OpenAI models in two situations:
+Members keep using `claude`. **Automatic routing** (Manage → **Routing**) chooses between the Claude subscription and the Codex login. It uses **the member's own OpenAI API key only when both are unavailable.** There are two strategies for Claude and Codex:
+
+- **Balanced:** each new Claude Code session goes to whichever of Claude and Codex has more quota left. Claude's figure is the tighter of its 5-hour and 7-day windows; Codex's is its weekly window. Both come from the latest observations recorded from every response, shared by all app instances. Ties go to Claude. Sessions keep their provider while active (6-hour idle window).
+- **Claude first:** Claude serves until it refuses for quota, then Codex.
+
+In both strategies, if a session's provider runs out, the session moves to the other one. A session moving from Codex to Claude is sent without extended thinking, because Claude rejects histories with unsigned thinking. The API key is used only when both Claude and Codex are refused or known to be out until their reset. Codex usage now also appears among the quota observations (`openai` / `codex`).
+
+The gateway can serve Claude Code from OpenAI models in two situations:
 
 - **Automatic fallback** (Manage → **Routing**, off by default). When Anthropic refuses a request because the subscription's quota is used up (`anthropic-ratelimit-unified-status: rejected`), the gateway remembers Claude as unavailable until the reported reset. Meanwhile it serves Claude Code requests from the **shared Codex login**, and then from **the member's own broker virtual key**. A refusal is retried elsewhere only before any byte reaches the client, so nothing is duplicated. A Claude Code session that moved stays on its fallback while it is active (6-hour idle window), because mixing providers mid tool loop breaks Anthropic's signed thinking blocks. New sessions return to Claude after the reset.
 - **Explicit choice:** a member runs `/model gpt-6.2-sol` (or any priced OpenAI model). This works even with automatic fallback off, and can be disabled on the Routing page.

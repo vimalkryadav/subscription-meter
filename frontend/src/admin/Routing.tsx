@@ -4,19 +4,22 @@ import type { Price } from './Broker';
 
 interface RoutingStatus {
   gptModelsEnabled: boolean; fallbackEnabled: boolean; codexEnabled: boolean; brokerEnabled: boolean;
-  mapOpus: string; mapSonnet: string; mapHaiku: string; memberWeeklyBudgetUsd: number; updatedAt: string; updatedBy: string;
+  mapOpus: string; mapSonnet: string; mapHaiku: string; memberWeeklyBudgetUsd: number; updatedAt: string; updatedBy: string; strategy: string;
+  balance: { claudeUsedPercent: number | null; codexUsedPercent: number | null; newSessionsGoTo: string };
   codexConfigured: boolean; memberKeys: number;
-  state: { anthropicBlockedUntil: string | null; codexBlockedUntil: string | null; codexUsedPercent: number | null; codexResetAt: string | null; sessionsOnFallback: number };
+  state: { anthropicBlockedUntil: string | null; codexBlockedUntil: string | null; codexUsedPercent: number | null; codexResetAt: string | null; sessionsOnFallback: number; sessionsOnClaude: number; sessionsOnCodex: number; sessionsOnBroker: number };
   servedLast24h: { provider: string; account: string; requests: number }[];
 }
 const onOff = [{ value: 'true', label: 'On' }, { value: 'false', label: 'Off' }];
+const strategies = [{ value: 'balanced', label: 'Balanced: new sessions go to whichever of Claude and Codex has more quota left' }, { value: 'claude_first', label: 'Claude first: use Codex only when Claude runs out' }];
+const pct = (value: number | null) => value == null ? 'unknown' : Math.round(value) + '% used';
 const servedLabel = (row: { provider: string; account: string }) => row.provider === 'anthropic' ? 'Claude subscription' : row.account === 'codex' ? 'Codex login' : row.account === 'broker' ? 'OpenAI API key (broker)' : row.provider + ' · ' + row.account;
 
 export default function Routing() {
   const status = useResource<RoutingStatus>('/admin/routing'), broker = useResource<{ prices: Price[] }>('/admin/broker/state'), save = useMutation();
   const [form, setForm] = useState<Record<string, string> | null>(null), [saved, setSaved] = useState('');
   const data = status.data;
-  const values = form ?? (data ? { gptModelsEnabled: String(data.gptModelsEnabled), fallbackEnabled: String(data.fallbackEnabled), codexEnabled: String(data.codexEnabled), brokerEnabled: String(data.brokerEnabled), mapOpus: data.mapOpus, mapSonnet: data.mapSonnet, mapHaiku: data.mapHaiku, memberWeeklyBudgetUsd: String(data.memberWeeklyBudgetUsd) } : null);
+  const values = form ?? (data ? { gptModelsEnabled: String(data.gptModelsEnabled), fallbackEnabled: String(data.fallbackEnabled), codexEnabled: String(data.codexEnabled), brokerEnabled: String(data.brokerEnabled), mapOpus: data.mapOpus, mapSonnet: data.mapSonnet, mapHaiku: data.mapHaiku, memberWeeklyBudgetUsd: String(data.memberWeeklyBudgetUsd), strategy: data.strategy } : null);
   const change = (name: string, value: string) => { setSaved(''); setForm({ ...values!, [name]: value }); };
   const models = (current: string) => [...(broker.data?.prices.some(p => p.model === current) ? [] : [{ value: current, label: current }]), ...(broker.data?.prices ?? []).map(p => ({ value: p.model, label: p.model + ' · $' + p.inputUsdPerMTok + ' / $' + p.outputUsdPerMTok }))];
   const st = data?.state;
@@ -26,18 +29,24 @@ export default function Routing() {
       <div className="cu-grid cu-stats">
         <Stat title="Claude subscription" value={st.anthropicBlockedUntil ? 'Out of quota' : 'Serving'} note={st.anthropicBlockedUntil ? 'Until ' + date(st.anthropicBlockedUntil) : 'Fallback starts on Claude’s quota refusal'} />
         <Stat title="Codex login" value={!data.codexConfigured ? 'Not connected' : st.codexBlockedUntil ? 'Out of quota' : st.codexUsedPercent == null ? 'Ready' : st.codexUsedPercent + '% used'} note={st.codexBlockedUntil ? 'Until ' + date(st.codexBlockedUntil) : st.codexResetAt ? 'Weekly window resets ' + date(st.codexResetAt) : 'Usage appears after the first Codex request'} />
-        <Stat title="Sessions on fallback" value={count(st.sessionsOnFallback)} note="A moved session stays on its fallback while active" />
+        <Stat title="Active sessions" value={count(st.sessionsOnClaude + st.sessionsOnCodex + st.sessionsOnBroker)} note={count(st.sessionsOnClaude) + ' Claude · ' + count(st.sessionsOnCodex) + ' Codex · ' + count(st.sessionsOnBroker) + ' API key'} />
         <Stat title="Member fallback keys" value={count(data.memberKeys)} note={'Created on first use · ' + money(data.memberWeeklyBudgetUsd) + ' / week each'} />
       </div>
+      <Panel title="Balance"><dl className="cu-coverage">
+        <div><dt>Claude subscription (tighter of 5-hour and 7-day windows)</dt><dd>{pct(data.balance.claudeUsedPercent)}</dd></div>
+        <div><dt>Codex login (weekly window)</dt><dd>{pct(data.balance.codexUsedPercent)}</dd></div>
+        <div><dt>New sessions currently go to</dt><dd>{data.strategy !== 'balanced' ? 'Claude (Claude-first mode)' : data.balance.newSessionsGoTo === 'codex' ? 'Codex (more quota left)' : 'Claude (more quota left, or tied)'}</dd></div>
+      </dl><p className="cu-muted">The member OpenAI-key tier is used only when both Claude and Codex are unavailable. Sessions stay with their provider while active.</p></Panel>
       <Panel title="Who served Claude Code requests (last 24 hours)"><Table headings={['Served by', 'Requests']} empty={!data.servedLast24h.length}>{data.servedLast24h.map(row => <tr key={row.provider + row.account}><td>{servedLabel(row)}</td><td>{count(row.requests)}</td></tr>)}</Table></Panel>
       <Panel title="Settings"><form className="cu-filter-grid" onSubmit={async event => {
         event.preventDefault();
         try {
-          await save.run('/admin/routing', 'PUT', { gptModelsEnabled: values.gptModelsEnabled === 'true', fallbackEnabled: values.fallbackEnabled === 'true', codexEnabled: values.codexEnabled === 'true', brokerEnabled: values.brokerEnabled === 'true', mapOpus: values.mapOpus, mapSonnet: values.mapSonnet, mapHaiku: values.mapHaiku, memberWeeklyBudgetUsd: Number(values.memberWeeklyBudgetUsd) });
+          await save.run('/admin/routing', 'PUT', { gptModelsEnabled: values.gptModelsEnabled === 'true', fallbackEnabled: values.fallbackEnabled === 'true', codexEnabled: values.codexEnabled === 'true', brokerEnabled: values.brokerEnabled === 'true', mapOpus: values.mapOpus, mapSonnet: values.mapSonnet, mapHaiku: values.mapHaiku, memberWeeklyBudgetUsd: Number(values.memberWeeklyBudgetUsd), strategy: values.strategy });
           setForm(null); setSaved('Routing saved. It applies within a few seconds.'); status.refresh();
         } catch { /* error above */ }
       }}>
-        <Select label="Automatic fallback" value={values.fallbackEnabled} onChange={v => change('fallbackEnabled', v)} items={onOff} />
+        <Select label="Automatic routing" value={values.fallbackEnabled} onChange={v => change('fallbackEnabled', v)} items={onOff} />
+        <Select label="Claude and Codex" value={values.strategy} onChange={v => change('strategy', v)} items={strategies} />
         <Select label="Members may choose OpenAI models (/model gpt-…)" value={values.gptModelsEnabled} onChange={v => change('gptModelsEnabled', v)} items={onOff} />
         <Select label="Tier 2: Codex login" value={values.codexEnabled} onChange={v => change('codexEnabled', v)} items={onOff} />
         <Select label="Tier 3: member OpenAI keys (broker)" value={values.brokerEnabled} onChange={v => change('brokerEnabled', v)} items={onOff} />
