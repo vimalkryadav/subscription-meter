@@ -19,6 +19,7 @@ public class KafkaRequestLedger implements RequestLedger {
     public void begin(String id,String member,String path,String model,Instant time){admission.begin(id,member,path,model,time);}
     public void markInterrupted(){admission.markInterrupted();}
     public void identify(String id,String provider,String account,String client){admission.identify(id,provider,account,client);}
+    public void served(String id,String provider,String account,String model){admission.served(id,provider,account,model);}
     public void identify(String id,String provider,String account,String client,String session,String agent){admission.identify(id,provider,account,client,session,agent);}
     public void finish(String id,RequestResult result){
         Usage u=result.usage();var m=new HashMap<String,Object>();

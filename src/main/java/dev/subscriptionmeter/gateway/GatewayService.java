@@ -72,8 +72,13 @@ public class GatewayService {
               try { capture=audits.begin(context,member.id(),body); }
               finally { metrics.phase(GatewayMetrics.Phase.REQUEST_AUDIT,auditStarted); }
               requireLease();
-              try (var reply = send(method, path + (query == null ? "" : "?" + query), headers, body)) {
+              var routing=new HashMap<>(headers);
+              routing.put(dev.subscriptionmeter.routing.FallbackRouter.MEMBER,member.id());
+              String sessionLabel=clientLabel(context,"x-claude-code-session-id");
+              if(sessionLabel!=null)routing.put(dev.subscriptionmeter.routing.FallbackRouter.SESSION,sessionLabel);
+              try (var reply = send(method, path + (query == null ? "" : "?" + query), routing, body)) {
                 status = reply.status();
+                if(reply.routedProvider()!=null)ledger.served(id,reply.routedProvider(),reply.routedAccount(),reply.servedModel());
                 Map<String, String> outgoing = new HashMap<>();
                 reply.headers().forEach((name, values) -> {
                     String key = name.toLowerCase(Locale.ROOT);

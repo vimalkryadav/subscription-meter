@@ -116,6 +116,8 @@ class PortalFlowTest {
         assertThat(mvc.perform(get("/admin/sessions")).andReturn().getResponse().getStatus()).isEqualTo(401);
         assertThat(mvc.perform(get("/admin/broker/state").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(get("/admin/broker/state")).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(get("/admin/routing").cookie(a.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(get("/admin/routing")).andReturn().getResponse().getStatus()).isEqualTo(401);
         assertThat(mvc.perform(post("/admin/broker/keys").cookie(a.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",a.csrf())
                 .contentType("application/json").content("{\"name\":\"x\",\"purpose\":\"other\"}")).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(get("/admin/key-requests").header("Authorization","Bearer "+key)).andReturn().getResponse().getStatus()).isEqualTo(401);
@@ -155,6 +157,10 @@ class PortalFlowTest {
         try {
             assertThat(mvc.perform(get("/admin/status").header("Authorization","Bearer "+ADMIN)).andReturn().getResponse().getStatus()).isEqualTo(401);
             assertThat(mvc.perform(get("/admin/status").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(200);
+            var routing=mvc.perform(get("/admin/routing").cookie(owner.cookie())).andReturn();
+            assertThat(routing.getResponse().getStatus()).isEqualTo(200);
+            assertThat(json(routing).path("fallbackEnabled").asBoolean(true)).isFalse();
+            assertThat(json(routing).path("mapOpus").asString()).isEqualTo("gpt-6.2-sol");
             assertThat(mvc.perform(get("/admin/status").cookie(member.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
             assertThat(mvc.perform(get("/admin/metrics")).andReturn().getResponse().getStatus()).isEqualTo(401);
             assertThat(mvc.perform(get("/admin/metrics").cookie(member.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
