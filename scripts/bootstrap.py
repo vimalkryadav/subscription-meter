@@ -16,6 +16,8 @@ for name in ("admin-token", "metrics-token", "upstream-token", "deploy-token", "
     # Docker mounts individual files into containers running as unprivileged users.
     # The parent directory is 0700, preventing other host users from reading them.
     path.chmod(0o644)
+# Directory for the published Codex access token; deployments replace it with a symlink to the refresher's output.
+(directory / "codex-token").mkdir(mode=0o755, exist_ok=True)
 env = ROOT / ".env"
 if not env.exists():
     fd = os.open(env, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

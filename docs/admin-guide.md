@@ -351,3 +351,25 @@ The script takes the release lock, accepts only the active release's image and S
 
 First-time setup: `secrets/openai-api-key` (real key, broker only), `secrets/broker-admin-token` (random) and `secrets/openai-virtual-key` (the summaries virtual key, created in `/manage` after the broker is running) must exist before the release, because the app slots mount them. `scripts/bootstrap.py` creates them, empty where appropriate, and never overwrites existing files.
 
+
+## Routing: Claude → Codex → OpenAI API key
+
+Members keep using `claude`. The gateway can serve Claude Code from OpenAI models in two situations:
+
+- **Automatic fallback** (Manage → **Routing**, off by default). When Anthropic refuses a request because the subscription's quota is used up (`anthropic-ratelimit-unified-status: rejected`), the gateway remembers Claude as unavailable until the reported reset. Meanwhile it serves Claude Code requests from the **shared Codex login**, and then from **the member's own broker virtual key**. A refusal is retried elsewhere only before any byte reaches the client, so nothing is duplicated. A Claude Code session that moved stays on its fallback while it is active (6-hour idle window), because mixing providers mid tool loop breaks Anthropic's signed thinking blocks. New sessions return to Claude after the reset.
+- **Explicit choice:** a member runs `/model gpt-6.2-sol` (or any priced OpenAI model). This works even with automatic fallback off, and can be disabled on the Routing page.
+
+Each Claude model is mapped to an OpenAI model (default Opus → `gpt-6.2-sol`, Sonnet and others → `gpt-6.1-terra`, Haiku → `gpt-6-luna`). Reasoning effort follows Claude Code's extended-thinking budget, and Haiku-class helper calls use low effort. The gateway translates Anthropic Messages to the OpenAI Responses API and streams the reply back in Anthropic format:
+
+- tools become function calls; tool results become function call outputs
+- images are passed through
+- mid-conversation system messages become developer messages
+- the session ID is used as the prompt-cache key
+
+Accounting is unchanged. Requests record `provider=openai`, `upstream_account=codex|broker` and `served_model`.
+
+**Tier 2, Codex login.** This uses the ChatGPT backend with the access token published by the refresher (mounted read-only into the app at `/run/control-usage-codex`). The ChatGPT account ID is read from the token's claims. Codex reports its weekly usage on every response (`x-codex-primary-used-percent`, reset time). The router stops using Codex at 100% or on a 429 until the reset. The Codex login only offers some models (the gpt-6 and gpt-5.6 families); others go to tier 3. The public `api.openai.com` endpoint rejects this login (missing API scopes).
+
+**Tier 3, member OpenAI keys.** On a member's first tier-3 request, the gateway creates a broker virtual key named "Fallback · <member>" with the default weekly budget (Routing page, $10). It keeps an AES-GCM sealed copy so it can present the key. Each key is visible and editable under OpenAI API like any other, and the global weekly cap still applies. When a member's budget is used up, they receive Anthropic's own rate-limit error.
+
+`count_tokens` requests on a fallback are answered with a local estimate. Routing status shown on the page (Claude and Codex availability, sessions on fallback) is per app instance and is relearned after a release.

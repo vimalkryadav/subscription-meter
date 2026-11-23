@@ -19,8 +19,11 @@ services:
       OPENAI_API_BASE_URL: http://openai-broker:8190
       BROKER_URL: http://openai-broker:8190
       BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker-admin-token
+      # Access token published by scripts/refresh_openai_token.py (directory mount so replacements are seen).
+      CODEX_TOKEN_FILE: /run/control-usage-codex/access-token
     volumes:
       - ./deploy/operations:/run/control-usage-operations:ro
+      - ./secrets/codex-token:/run/control-usage-codex:ro
     secrets: [deploy-token, openai-virtual-key, broker-admin-token]
     stop_grace_period: 370s
   app-green:
@@ -39,8 +42,11 @@ services:
       OPENAI_API_BASE_URL: http://openai-broker:8190
       BROKER_URL: http://openai-broker:8190
       BROKER_ADMIN_TOKEN_FILE: /run/secrets/broker-admin-token
+      # Access token published by scripts/refresh_openai_token.py (directory mount so replacements are seen).
+      CODEX_TOKEN_FILE: /run/control-usage-codex/access-token
     volumes:
       - ./deploy/operations:/run/control-usage-operations:ro
+      - ./secrets/codex-token:/run/control-usage-codex:ro
     secrets: [deploy-token, openai-virtual-key, broker-admin-token]
     stop_grace_period: 370s
   # The only container given the real OpenAI key. Shared service with its own lifecycle:

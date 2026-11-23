@@ -2,6 +2,8 @@ package dev.subscriptionmeter.domain;
 
 public interface RequestLedger {
     default void identify(String id,String provider,String account,String client) { }
+    /** Records which provider/account/model actually served a fallback-routed request. */
+    default void served(String id,String provider,String account,String model) { }
     /** Adds the client's own session/agent labels (validated, attribution only). */
     default void identify(String id,String provider,String account,String client,String session,String agent) {
         identify(id,provider,account,client);
