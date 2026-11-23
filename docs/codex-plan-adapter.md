@@ -14,6 +14,20 @@ Before enabling for members, verify approved provisioning on Coder, a real strea
 
 The token-file reader is bounded to 16 KiB and rereads the configured file for each request, so an atomic replacement takes effect without restarting the gateway. It permits one final newline, rejects malformed bearer values, and never searches a user's Codex home directory. The transport sets JSON/SSE headers itself, strips member authorization/cookies/account-selection headers, preserves body bytes, and closes an unfinished upstream response at its deadline. Nested hosted-tool definitions and audio/video input are rejected. Conflicting terminal events, inconsistent token totals, oversized events and truncated streams cannot produce complete usage.
 
+## Dedicated Codex login and token refresher
+
+The deployment's Codex login lives only on Coder at `/home/coder/control-usage-openai/codex-home` (mode 0700). It was created with the pinned Codex CLI over `coder ssh` using device-code sign-in, and it is separate from any Mac login:
+
+```sh
+coder ssh bugpolice-control -- 'CODEX_HOME=/home/coder/control-usage-openai/codex-home ~/.local/bin/codex login --device-auth'
+```
+
+`scripts/refresh_openai_token.py` is the **only** process allowed to use that folder. Refresh tokens rotate, so an interactive Codex session started with the same `CODEX_HOME` could invalidate the gateway's copy. The refresher renews the login when the access token has less than 48 hours left. It writes the updated record atomically under a lock and publishes only the access token to `/home/coder/control-usage-openai/gateway-token/access-token`. Mount that directory read-only into the application slots and point `METER_OPENAI_TOKEN_FILE` at the file inside it. The refresh token never leaves `codex-home`. Output never contains tokens, provider response bodies or account identifiers.
+
+Install `deploy/control-usage-openai-refresh.service` and `.timer` into `/etc/systemd/system/`, reload systemd, and enable the timer. It runs hourly and contacts OpenAI only when renewal is due. `--force` renews immediately. If the journal reports `login_required`, run the sign-in command above again. Other failures retry on the next run while the current access token remains valid.
+
+This refresher handles token renewal only; the account-sharing question in prerequisite 1 below is unchanged.
+
 ## Exact activation prerequisites
 
 This is an HTTP adapter, **not an OAuth registration or refresh service**. The following remain external prerequisites; a configuration switch is not evidence that they have been satisfied:

@@ -1,0 +1,14 @@
+[Unit]
+Description=Renew the dedicated Codex login and publish the gateway access token
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=coder
+WorkingDirectory=/home/coder/control-usage-deploy
+Environment=CONTROL_USAGE_CODEX_HOME=/home/coder/control-usage-openai/codex-home
+Environment=CONTROL_USAGE_OPENAI_TOKEN_DIR=/home/coder/control-usage-openai/gateway-token
+ExecStart=/usr/bin/python3 /home/coder/control-usage-deploy/scripts/refresh_openai_token.py
+TimeoutStartSec=90
+UMask=0077
