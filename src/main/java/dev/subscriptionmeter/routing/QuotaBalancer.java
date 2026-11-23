@@ -49,6 +49,21 @@ public class QuotaBalancer {
         return max;
     }
 
+    private final Map<String, Double> perDeployment = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Instant> perDeploymentAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Used percentage of a deployment's tightest live window (null when unknown). */
+    public Double usedPercent(Deployment d, Instant now) {
+        if (d.broker()) return null; // budget limits are enforced by the broker itself
+        Instant at = perDeploymentAt.get(d.id());
+        if (at != null && at.plus(CACHE).isAfter(now)) return perDeployment.get(d.id());
+        Double used = d.anthropic() ? used("anthropic", d.account(), List.of("five_hour", "seven_day"), now)
+                : used("openai", d.account(), List.of("seven_day", "five_hour", "primary", "secondary"), now);
+        if (used == null) perDeployment.remove(d.id()); else perDeployment.put(d.id(), used);
+        perDeploymentAt.put(d.id(), now);
+        return used;
+    }
+
     public Headroom headroom(Instant now) {
         Headroom h = cached;
         if (h != null && cachedAt.plus(CACHE).isAfter(now)) return h;
@@ -59,11 +74,13 @@ public class QuotaBalancer {
     }
 
     /** Stores Codex's own quota report (rounded to the minute, so at most one row per window per minute). */
-    public void recordCodex(String bucket, Integer usedPercent, Instant resetsAt, Instant now) {
+    public void recordCodex(String bucket, Integer usedPercent, Instant resetsAt, Instant now) { recordCodex("codex", bucket, usedPercent, resetsAt, now); }
+
+    public void recordCodex(String account, String bucket, Integer usedPercent, Instant resetsAt, Instant now) {
         if (usedPercent == null || resetsAt == null || usedPercent < 0 || usedPercent > 100 || !resetsAt.isAfter(now)) return;
         Instant minute = now.truncatedTo(ChronoUnit.MINUTES);
-        String id = UUID.nameUUIDFromBytes(("openai:codex:" + bucket + ":" + minute + ":" + resetsAt + ":" + usedPercent).getBytes(StandardCharsets.UTF_8)).toString();
-        try { snapshots.save(id, "openai", "codex", bucket, BigDecimal.valueOf(usedPercent), resetsAt, minute, "codex_headers_v1"); }
+        String id = UUID.nameUUIDFromBytes(("openai:" + account + ":" + bucket + ":" + minute + ":" + resetsAt + ":" + usedPercent).getBytes(StandardCharsets.UTF_8)).toString();
+        try { snapshots.save(id, "openai", account, bucket, BigDecimal.valueOf(usedPercent), resetsAt, minute, "codex_headers_v1"); }
         catch (RuntimeException ignored) { /* quota bookkeeping never fails a member request */ }
         cached = null;
     }
