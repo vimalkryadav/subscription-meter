@@ -2,7 +2,7 @@
 -- The real provider key is never stored in the database.
 CREATE TABLE IF NOT EXISTS broker_keys (
   id VARCHAR(36) PRIMARY KEY, name VARCHAR(100) NOT NULL, purpose VARCHAR(30) NOT NULL, member_id VARCHAR(36),
-  key_hash VARCHAR(64) NOT NULL UNIQUE, key_prefix VARCHAR(16) NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE,
+  key_hash VARCHAR(64) NOT NULL UNIQUE, key_prefix VARCHAR(16) NOT NULL, key_sealed TEXT, active BOOLEAN NOT NULL DEFAULT TRUE,
   weekly_budget_usd NUMERIC(10,2), rpm INTEGER, allowed_models TEXT, max_output_tokens INTEGER NOT NULL DEFAULT 16384,
   expires_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by VARCHAR(80) NOT NULL, revoked_at TIMESTAMP WITH TIME ZONE

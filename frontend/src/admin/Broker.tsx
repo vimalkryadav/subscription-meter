@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { ApiError } from '../shared/api';
 import { Confirm, count, date, Loading, money, Notice, Panel, Select, Stat, Table, text, useMutation, useResource } from './ui';
 
-interface BrokerKey { id: string; name: string; purpose: string; memberId: string | null; prefix: string; active: boolean; weeklyBudgetUsd: number | null; rpm: number | null; allowedModels: string[]; maxOutputTokens: number; expiresAt: string | null; createdAt: string; createdBy: string; spentUsd: number; callsThisWeek: number }
+interface BrokerKey { id: string; name: string; purpose: string; memberId: string | null; prefix: string; active: boolean; viewable: boolean; weeklyBudgetUsd: number | null; rpm: number | null; allowedModels: string[]; maxOutputTokens: number; expiresAt: string | null; createdAt: string; createdBy: string; spentUsd: number; callsThisWeek: number }
 interface Price { model: string; inputUsdPerMTok: number; cachedInputUsdPerMTok: number; outputUsdPerMTok: number; longContextTokens: number | null; longInputUsdPerMTok: number | null; longOutputUsdPerMTok: number | null; updatedBy: string }
 interface BrokerState { realKeyConfigured: boolean; upstreamHost: string; weeklyCapUsd: number; weekStart: string; spentUsd: number; remainingUsd: number; settings: { updatedAt: string; updatedBy: string }; keys: BrokerKey[]; prices: Price[] }
 interface Call { id: string; createdAt: string; keyName: string | null; purpose: string | null; model: string | null; streaming: boolean; state: string; statusCode: number | null; reservedUsd: number; costUsd: number | null; inputTokens: number | null; outputTokens: number | null; durationMs: number | null; errorType: string | null }
@@ -17,7 +18,12 @@ export default function Broker() {
   const state = useResource<BrokerState>('/admin/broker/state'), members = useResource<Member[]>('/admin/members');
   const [callKey, setCallKey] = useState(''), calls = useResource<Call[]>('/admin/broker/calls?limit=100' + (callKey ? '&keyId=' + callKey : ''));
   const [creating, setCreating] = useState(false), [editing, setEditing] = useState<BrokerKey | null>(null), [revoking, setRevoking] = useState<BrokerKey | null>(null);
-  const [issued, setIssued] = useState(''), [message, setMessage] = useState('');
+  const [issued, setIssued] = useState(''), [message, setMessage] = useState(''), [shown, setShown] = useState<{ name: string; key: string } | null>(null);
+  async function showKey(key: BrokerKey) {
+    setMessage(''); setShown(null);
+    try { const result = await mutation.run<{ key: string }>('/admin/broker/keys/' + key.id + '/secret', 'GET'); if (result) setShown({ name: key.name, key: result.key }); }
+    catch (failure) { mutation.clearError(); setMessage(failure instanceof ApiError && failure.status === 409 ? key.name + ' cannot be shown again (the broker admin token changed since it was created). Create a replacement key.' : 'Could not load the key. Try again.'); }
+  }
   const [cap, setCap] = useState<string | null>(null), [priceForm, setPriceForm] = useState<Record<string, string> | null>(null);
   const mutation = useMutation();
   const data = state.data;
@@ -43,7 +49,8 @@ export default function Broker() {
 
     <Panel title="Virtual keys"><div className="cu-bar"><p className="cu-muted" style={{ margin: 0 }}>Callers use these instead of the real key. Each can have its own weekly budget, rate limit and allowed models.</p><button className="cu-primary" aria-expanded={creating} onClick={() => { setCreating(!creating); setIssued(''); }}>{creating ? 'Close' : 'Create virtual key'}</button></div>
       {creating && <KeyForm members={members.data ?? []} busy={mutation.busy} onSubmit={async body => { try { const result = await mutation.run<{ key: string }>('/admin/broker/keys', 'POST', body); if (result) { setIssued(result.key); refresh(); } } catch { /* shown above */ } }} />}
-      {issued && <div className="cu-secret"><p>Copy this key now; it is not shown again. For session summaries, write it to the server’s <code>secrets/openai-virtual-key</code> file.</p><code>{issued}</code><div className="cu-bar"><button onClick={async () => { try { await navigator.clipboard.writeText(issued); setMessage('Key copied.'); } catch { setMessage('Clipboard unavailable. Select and copy the key directly.'); } }}>Copy key</button><button onClick={() => setIssued('')}>Hide key</button></div></div>}
+      {issued && <div className="cu-secret"><p>Copy this key now; you can view it again later with Show key. For session summaries, write it to the server’s <code>secrets/openai-virtual-key</code> file.</p><code>{issued}</code><div className="cu-bar"><button onClick={async () => { try { await navigator.clipboard.writeText(issued); setMessage('Key copied.'); } catch { setMessage('Clipboard unavailable. Select and copy the key directly.'); } }}>Copy key</button><button onClick={() => setIssued('')}>Hide key</button></div></div>}
+      {shown && <div className="cu-secret"><p>{shown.name}. This view was recorded in the admin logs.</p><code>{shown.key}</code><div className="cu-bar"><button onClick={async () => { try { await navigator.clipboard.writeText(shown.key); setMessage('Key copied.'); } catch { setMessage('Clipboard unavailable. Select and copy the key directly.'); } }}>Copy key</button><button onClick={() => setShown(null)}>Hide key</button></div></div>}
       {editing && <KeyForm key={editing.id} existing={editing} members={members.data ?? []} busy={mutation.busy} onCancel={() => setEditing(null)} onSubmit={body => act(() => mutation.run('/admin/broker/keys/' + editing.id, 'PATCH', { ...body, active: true }), 'Key updated.').then(ok => { if (ok) setEditing(null); })} />}
       <Table headings={['Name', 'Purpose / member', 'Prefix', 'This week', 'Budget', 'Limits', 'Status', '']} empty={!data.keys.length}>{data.keys.map(key => <tr key={key.id}>
         <td>{key.name}<br /><span className="cu-muted">created {date(key.createdAt)} by {key.createdBy}</span></td>
@@ -53,7 +60,7 @@ export default function Broker() {
         <td>{key.weeklyBudgetUsd == null ? 'Global cap only' : money(key.weeklyBudgetUsd) + ' / week'}</td>
         <td>{key.rpm == null ? 'No RPM limit' : key.rpm + ' / min'}<br /><span className="cu-muted">{key.allowedModels.length ? key.allowedModels.join(', ') : 'Any priced model'} · ≤{count(key.maxOutputTokens)} output tokens{key.expiresAt ? ' · expires ' + date(key.expiresAt) : ''}</span></td>
         <td>{key.active ? <span className="cu-badge">Active</span> : 'Revoked'}</td>
-        <td>{key.active && <div className="cu-bar"><button className="cu-link" onClick={() => { setEditing(key); setCreating(false); }}>Edit</button><button className="cu-link" onClick={() => setRevoking(key)}>Revoke</button></div>}</td>
+        <td>{key.active && <div className="cu-bar">{key.viewable && <button className="cu-link" disabled={mutation.busy} onClick={() => void showKey(key)}>Show key</button>}<button className="cu-link" onClick={() => { setEditing(key); setCreating(false); }}>Edit</button><button className="cu-link" onClick={() => setRevoking(key)}>Revoke</button></div>}</td>
       </tr>)}</Table></Panel>
 
     <Panel title="Model prices"><p className="cu-muted">Only priced models can be called, because the cap is enforced with these rates. Keep them in line with OpenAI’s published prices (USD per 1M tokens).</p>

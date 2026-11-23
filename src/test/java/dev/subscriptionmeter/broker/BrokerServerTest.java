@@ -43,7 +43,7 @@ class BrokerServerTest {
         var ds = new DriverManagerDataSource("jdbc:h2:mem:broker" + UUID.randomUUID() + ";MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE", "sa", "");
         new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(ds);
         jdbc = new JdbcTemplate(ds);
-        store = new BrokerStore(jdbc);
+        store = new BrokerStore(jdbc, () -> Optional.of(ADMIN));
         upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/v1/responses", exchange -> {
             upstreamAuth.add(exchange.getRequestHeaders().getFirst("Authorization"));
@@ -196,6 +196,22 @@ class BrokerServerTest {
         var state = json(send("GET", "/admin/state", ADMIN, null));
         assertThat(state.path("upstreamHost").asString()).isEqualTo("127.0.0.1");
         assertThat(state.toString()).doesNotContain(REAL, ADMIN);
+    }
+
+    @Test void administratorsCanViewVirtualKeysAgainAndEachRevealIsLogged() throws Exception {
+        String key = createKey("");
+        String id = json(send("GET", "/admin/state", ADMIN, null)).path("keys").get(0).path("id").asString();
+        assertThat(json(send("GET", "/admin/state", ADMIN, null)).path("keys").get(0).path("viewable").asBoolean()).isTrue();
+        assertThat(send("GET", "/admin/keys/" + id + "/secret", null, null).statusCode()).isEqualTo(401);
+        var shown = send("GET", "/admin/keys/" + id + "/secret", ADMIN, null);
+        assertThat(shown.statusCode()).isEqualTo(200);
+        assertThat(json(shown).path("key").asString()).isEqualTo(key);
+        assertThat(jdbc.queryForObject("SELECT key_sealed FROM broker_keys WHERE id=?", String.class, id)).doesNotContain(key);
+        assertThat(json(send("GET", "/admin/log", ADMIN, null)).toString()).contains("broker.key.reveal").doesNotContain(key);
+        assertThat(send("GET", "/admin/keys/00000000-0000-0000-0000-000000000000/secret", ADMIN, null).statusCode()).isEqualTo(404);
+        // A key sealed under a different admin token cannot be opened: it reports "not viewable", never garbage.
+        var other = new BrokerStore(jdbc, () -> Optional.of("z".repeat(48)));
+        assertThat(other.reveal(id)).isEmpty();
     }
 
     @Test void longContextRatesApplyAboveThreshold() {

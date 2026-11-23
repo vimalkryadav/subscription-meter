@@ -42,6 +42,14 @@ public class AdminController {
         return issued;
     }
     @GetMapping("/members") public List<Member> list() { return members.list(); }
+    /** Shows an active member's current key again. Every reveal is recorded in the admin action log. */
+    @GetMapping("/members/{id}/key") public Map<String, String> key(@PathVariable String id,HttpServletRequest request) {
+        members.find(id);
+        String key=members.currentKey(id).orElseThrow(()->new ResponseStatusException(HttpStatus.CONFLICT,
+                "No viewable key: it predates viewable keys or access is revoked. Replace the key to get one."));
+        actionAudit.record(request,"member.key.reveal",id,Map.of());
+        return Map.of("key",key);
+    }
     @Transactional
     @DeleteMapping("/members/{id}") public Map<String, String> revoke(@PathVariable String id,HttpServletRequest request) {
         members.find(id);members.revoke(id);actionAudit.record(request,"member.revoke",id,Map.of());

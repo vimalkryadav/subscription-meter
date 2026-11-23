@@ -52,9 +52,10 @@ public final class BrokerMain {
         var jdbc = new JdbcTemplate(ds); jdbc.setQueryTimeout(10);
         Integer schema = jdbc.queryForObject("SELECT COUNT(*) FROM control_schema_history WHERE name LIKE '%V010__openai_key_broker.sql'", Integer.class);
         if (schema == null || schema != 1) throw new IllegalStateException("Broker schema migration V010 has not been applied");
-        var server = new BrokerServer(new BrokerStore(jdbc),
+        var adminToken = secretFile(env("BROKER_ADMIN_TOKEN_FILE", "/run/secrets/broker-admin-token"), Pattern.compile("[A-Za-z0-9_-]{32,200}"));
+        var server = new BrokerServer(new BrokerStore(jdbc, adminToken),
                 secretFile(env("OPENAI_API_KEY_FILE", "/run/secrets/openai-api-key"), Pattern.compile("sk-[A-Za-z0-9_-]{20,500}")),
-                secretFile(env("BROKER_ADMIN_TOKEN_FILE", "/run/secrets/broker-admin-token"), Pattern.compile("[A-Za-z0-9_-]{32,200}")),
+                adminToken,
                 env("OPENAI_UPSTREAM_URL", "https://api.openai.com"), java.time.Clock.systemUTC());
         var address = server.start(env("BROKER_BIND", "0.0.0.0"), Integer.parseInt(env("BROKER_PORT", "8190")));
         System.out.println("Key broker listening on port " + address.getPort());

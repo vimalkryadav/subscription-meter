@@ -61,6 +61,14 @@ public class BrokerAdminController {
         return relay(broker.call("GET", "/admin/calls?limit=" + limit + (keyId.isEmpty() ? "" : "&keyId=" + URLEncoder.encode(keyId, StandardCharsets.UTF_8)), null, actor(request)));
     }
 
+    /** Shows a virtual key again. Recorded in both the gateway's and the broker's admin logs. */
+    @GetMapping("/keys/{keyId}/secret")
+    public ResponseEntity<String> reveal(@PathVariable String keyId, HttpServletRequest request) {
+        var reply = broker.call("GET", "/admin/keys/" + id(keyId) + "/secret", null, actor(request));
+        record(request, reply, "broker.key.reveal", keyId, JSON.createObjectNode());
+        return relay(reply);
+    }
+
     @GetMapping("/log") public ResponseEntity<String> log(HttpServletRequest request) { return relay(broker.call("GET", "/admin/log?limit=50", null, actor(request))); }
 
     @PostMapping(value = "/keys", consumes = MediaType.APPLICATION_JSON_VALUE)

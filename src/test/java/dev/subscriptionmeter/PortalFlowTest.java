@@ -167,7 +167,16 @@ class PortalFlowTest {
             var created=mvc.perform(post("/admin/members").cookie(owner.cookie()).header("X-Portal-Request","1").header("X-CSRF-Token",owner.csrf())
                     .contentType("application/json").content("{\"name\":\"role-test\",\"rpm\":10,\"concurrency\":1}")).andReturn();
             assertThat(created.getResponse().getStatus()).isEqualTo(201);
-            members.revoke(json(created).path("member").path("id").asString());
+            String createdId=json(created).path("member").path("id").asString(),createdKey=json(created).path("key").asString();
+            // Admins can view a member key again; members cannot; every reveal is logged without the key.
+            var shown=mvc.perform(get("/admin/members/"+createdId+"/key").cookie(owner.cookie())).andReturn();
+            assertThat(shown.getResponse().getStatus()).isEqualTo(200);
+            assertThat(json(shown).path("key").asString()).isEqualTo(createdKey);
+            assertThat(mvc.perform(get("/admin/members/"+createdId+"/key").cookie(member.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_action_log WHERE action='member.key.reveal' AND target_id=?",Integer.class,createdId)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT details_json FROM admin_action_log WHERE action='member.key.reveal' AND target_id=?",String.class,createdId)).doesNotContain(createdKey);
+            members.revoke(createdId);
+            assertThat(mvc.perform(get("/admin/members/"+createdId+"/key").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(409);
             jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id());
             assertThat(mvc.perform(get("/admin/status").cookie(owner.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
         } finally { jdbc.update("UPDATE portal_accounts SET role='member' WHERE id=?",owner.id()); }
