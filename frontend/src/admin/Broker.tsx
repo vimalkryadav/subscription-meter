@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { ApiError } from '../shared/api';
-import { Confirm, count, date, Loading, money, Notice, Panel, Select, Stat, Table, text, useMutation, useResource } from './ui';
+import { Confirm, count, date, Loading, money, MultiSelect, Notice, Panel, Select, Stat, Table, text, useMutation, useResource } from './ui';
 
 interface BrokerKey { id: string; name: string; purpose: string; memberId: string | null; prefix: string; active: boolean; viewable: boolean; weeklyBudgetUsd: number | null; rpm: number | null; allowedModels: string[]; maxOutputTokens: number; expiresAt: string | null; createdAt: string; createdBy: string; spentUsd: number; callsThisWeek: number }
-interface Price { model: string; inputUsdPerMTok: number; cachedInputUsdPerMTok: number; outputUsdPerMTok: number; longContextTokens: number | null; longInputUsdPerMTok: number | null; longOutputUsdPerMTok: number | null; updatedBy: string }
+export interface Price { model: string; inputUsdPerMTok: number; cachedInputUsdPerMTok: number; outputUsdPerMTok: number; longContextTokens: number | null; longInputUsdPerMTok: number | null; longOutputUsdPerMTok: number | null; updatedBy: string }
 interface BrokerState { realKeyConfigured: boolean; upstreamHost: string; weeklyCapUsd: number; weekStart: string; spentUsd: number; remainingUsd: number; settings: { updatedAt: string; updatedBy: string }; keys: BrokerKey[]; prices: Price[] }
 interface Call { id: string; createdAt: string; keyName: string | null; purpose: string | null; model: string | null; streaming: boolean; state: string; statusCode: number | null; reservedUsd: number; costUsd: number | null; inputTokens: number | null; outputTokens: number | null; durationMs: number | null; errorType: string | null }
 interface Member { id: string; name: string; active: boolean }
@@ -12,7 +12,7 @@ interface Member { id: string; name: string; active: boolean }
 const purposes = [{ value: 'session_summary', label: 'Session summaries' }, { value: 'member_fallback', label: 'Member fallback' }, { value: 'other', label: 'Other' }];
 const purposeLabel = (value: string | null) => purposes.find(item => item.value === value)?.label ?? text(value);
 const optionalNumber = (value: string) => value.trim() === '' ? null : Number(value);
-const modelList = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
+export const modelOptions = (prices: Price[]) => prices.map(price => ({ value: price.model, label: price.model, note: '$' + price.inputUsdPerMTok + ' in / $' + price.outputUsdPerMTok + ' out per 1M' }));
 
 export default function Broker() {
   const state = useResource<BrokerState>('/admin/broker/state'), members = useResource<Member[]>('/admin/members');
@@ -48,10 +48,10 @@ export default function Broker() {
       <p className="cu-muted">Every call reserves its worst-case cost first, so total spending cannot pass this cap. Also set a budget limit on the key in OpenAI’s dashboard as a second safeguard.</p></Panel>
 
     <Panel title="Virtual keys"><div className="cu-bar"><p className="cu-muted" style={{ margin: 0 }}>Callers use these instead of the real key. Each can have its own weekly budget, rate limit and allowed models.</p><button className="cu-primary" aria-expanded={creating} onClick={() => { setCreating(!creating); setIssued(''); }}>{creating ? 'Close' : 'Create virtual key'}</button></div>
-      {creating && <KeyForm members={members.data ?? []} busy={mutation.busy} onSubmit={async body => { try { const result = await mutation.run<{ key: string }>('/admin/broker/keys', 'POST', body); if (result) { setIssued(result.key); refresh(); } } catch { /* shown above */ } }} />}
+      {creating && <KeyForm prices={data.prices} members={members.data ?? []} busy={mutation.busy} onSubmit={async body => { try { const result = await mutation.run<{ key: string }>('/admin/broker/keys', 'POST', body); if (result) { setIssued(result.key); refresh(); } } catch { /* shown above */ } }} />}
       {issued && <div className="cu-secret"><p>Copy this key now; you can view it again later with Show key. For session summaries, write it to the server’s <code>secrets/openai-virtual-key</code> file.</p><code>{issued}</code><div className="cu-bar"><button onClick={async () => { try { await navigator.clipboard.writeText(issued); setMessage('Key copied.'); } catch { setMessage('Clipboard unavailable. Select and copy the key directly.'); } }}>Copy key</button><button onClick={() => setIssued('')}>Hide key</button></div></div>}
       {shown && <div className="cu-secret"><p>{shown.name}. This view was recorded in the admin logs.</p><code>{shown.key}</code><div className="cu-bar"><button onClick={async () => { try { await navigator.clipboard.writeText(shown.key); setMessage('Key copied.'); } catch { setMessage('Clipboard unavailable. Select and copy the key directly.'); } }}>Copy key</button><button onClick={() => setShown(null)}>Hide key</button></div></div>}
-      {editing && <KeyForm key={editing.id} existing={editing} members={members.data ?? []} busy={mutation.busy} onCancel={() => setEditing(null)} onSubmit={body => act(() => mutation.run('/admin/broker/keys/' + editing.id, 'PATCH', { ...body, active: true }), 'Key updated.').then(ok => { if (ok) setEditing(null); })} />}
+      {editing && <KeyForm key={editing.id} existing={editing} prices={data.prices} members={members.data ?? []} busy={mutation.busy} onCancel={() => setEditing(null)} onSubmit={body => act(() => mutation.run('/admin/broker/keys/' + editing.id, 'PATCH', { ...body, active: true }), 'Key updated.').then(ok => { if (ok) setEditing(null); })} />}
       <Table headings={['Name', 'Purpose / member', 'Prefix', 'This week', 'Budget', 'Limits', 'Status', '']} empty={!data.keys.length}>{data.keys.map(key => <tr key={key.id}>
         <td>{key.name}<br /><span className="cu-muted">created {date(key.createdAt)} by {key.createdBy}</span></td>
         <td>{purposeLabel(key.purpose)}<br /><span className="cu-muted">{memberName(key.memberId)}</span></td>
@@ -86,13 +86,13 @@ export default function Broker() {
   </>;
 }
 
-function KeyForm({ existing, members, busy, onSubmit, onCancel }: { existing?: BrokerKey; members: Member[]; busy: boolean; onSubmit: (body: Record<string, unknown>) => void | Promise<void>; onCancel?: () => void }) {
+function KeyForm({ existing, prices, members, busy, onSubmit, onCancel }: { existing?: BrokerKey; prices: Price[]; members: Member[]; busy: boolean; onSubmit: (body: Record<string, unknown>) => void | Promise<void>; onCancel?: () => void }) {
   const [name, setName] = useState(existing?.name ?? ''), [purpose, setPurpose] = useState(existing?.purpose ?? 'session_summary'), [member, setMember] = useState(existing?.memberId ?? '');
   const [budget, setBudget] = useState(existing?.weeklyBudgetUsd == null ? '' : String(existing.weeklyBudgetUsd)), [rpm, setRpm] = useState(existing?.rpm == null ? '' : String(existing.rpm));
-  const [models, setModels] = useState(existing?.allowedModels.join(', ') ?? ''), [maxOutput, setMaxOutput] = useState(String(existing?.maxOutputTokens ?? 16384)), [expires, setExpires] = useState(existing?.expiresAt?.slice(0, 10) ?? '');
+  const [models, setModels] = useState<string[]>(existing?.allowedModels ?? []), [maxOutput, setMaxOutput] = useState(String(existing?.maxOutputTokens ?? 16384)), [expires, setExpires] = useState(existing?.expiresAt?.slice(0, 10) ?? '');
   function submit(event: FormEvent) {
     event.preventDefault();
-    void onSubmit({ name: name.trim(), ...(existing ? {} : { purpose, memberId: member || null }), weeklyBudgetUsd: optionalNumber(budget), rpm: optionalNumber(rpm), allowedModels: modelList(models), maxOutputTokens: Number(maxOutput), expiresAt: expires ? new Date(expires + 'T23:59:59Z').toISOString() : null });
+    void onSubmit({ name: name.trim(), ...(existing ? {} : { purpose, memberId: member || null }), weeklyBudgetUsd: optionalNumber(budget), rpm: optionalNumber(rpm), allowedModels: models, maxOutputTokens: Number(maxOutput), expiresAt: expires ? new Date(expires + 'T23:59:59Z').toISOString() : null });
   }
   return <Panel title={existing ? 'Edit ' + existing.name : 'New virtual key'}><form className="cu-filter-grid" onSubmit={submit}>
     <label>Name<input autoFocus required maxLength={100} value={name} onChange={event => setName(event.target.value)} placeholder="Session summaries" /></label>
@@ -100,7 +100,7 @@ function KeyForm({ existing, members, busy, onSubmit, onCancel }: { existing?: B
     {!existing && <Select label="Member (optional)" value={member} onChange={setMember} items={[{ value: '', label: 'Not tied to a member' }, ...members.filter(item => item.active).map(item => ({ value: item.id, label: item.name }))]} />}
     <label>Weekly budget (USD, empty = cap only)<input type="number" min="0" max="10000" step="0.01" value={budget} onChange={event => setBudget(event.target.value)} /></label>
     <label>Requests / minute (empty = none)<input type="number" min="1" max="10000" value={rpm} onChange={event => setRpm(event.target.value)} /></label>
-    <label>Allowed models (comma-separated, empty = any priced)<input maxLength={2000} value={models} onChange={event => setModels(event.target.value)} placeholder="gpt-6-luna" /></label>
+    <MultiSelect label="Allowed models" values={models} onChange={setModels} items={modelOptions(prices)} emptyLabel="Any priced model" />
     <label>Max output tokens per call<input required type="number" min="1" max="128000" value={maxOutput} onChange={event => setMaxOutput(event.target.value)} /></label>
     <label>Expires (optional)<input type="date" value={expires} onChange={event => setExpires(event.target.value)} /></label>
     <div className="cu-bar"><button className="cu-primary" disabled={busy}>{existing ? 'Save key' : 'Create key'}</button>{onCancel && <button type="button" onClick={onCancel}>Cancel</button>}</div>

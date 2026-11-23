@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from 'react';
 import { categories, count, date, Heading, Loading, money, Notice, options, Panel, Segments, Select, Stat, Table, text, useMutation, useResource } from './ui';
+import type { Price } from './Broker';
 
 const Broker = lazy(() => import('./Broker'));
 
@@ -40,7 +41,7 @@ export function Sessions() {
 }
 
 export function OpenAIApi() {
-  const status = useResource<ApiStatus>('/admin/openai-api'), save = useMutation();
+  const status = useResource<ApiStatus>('/admin/openai-api'), save = useMutation(), broker = useResource<{ prices: Price[] }>('/admin/broker/state');
   const [form, setForm] = useState<Record<string, string> | null>(null), [saved, setSaved] = useState('');
   const data = status.data;
   const values = form ?? (data ? { weeklyCapUsd: String(data.weeklyCapUsd), summaryModel: data.summaryModel, inputUsdPerMTok: String(data.inputUsdPerMTok), cachedInputUsdPerMTok: String(data.cachedInputUsdPerMTok), outputUsdPerMTok: String(data.outputUsdPerMTok), summariesEnabled: String(data.summariesEnabled) } : null);
@@ -62,12 +63,14 @@ export function OpenAIApi() {
       }}>
         <label>Weekly limit for summaries (USD)<input required type="number" min="0" max="10000" step="0.01" value={values.weeklyCapUsd} onChange={event => change('weeklyCapUsd', event.target.value)} /></label>
         <Select label="Session summaries" value={values.summariesEnabled} onChange={value => change('summariesEnabled', value)} items={[{ value: 'true', label: 'On' }, { value: 'false', label: 'Off' }]} />
-        <label>Summary model<input required maxLength={100} pattern="[A-Za-z0-9._:\-]+" value={values.summaryModel} onChange={event => change('summaryModel', event.target.value)} /></label>
+        {broker.data?.prices.length ? <Select label="Summary model" value={values.summaryModel} onChange={model => { const price = broker.data!.prices.find(item => item.model === model); setSaved(''); setForm({ ...values, summaryModel: model, ...(price ? { inputUsdPerMTok: String(price.inputUsdPerMTok), cachedInputUsdPerMTok: String(price.cachedInputUsdPerMTok), outputUsdPerMTok: String(price.outputUsdPerMTok) } : {}) }); }}
+          items={[...(broker.data.prices.some(item => item.model === values.summaryModel) ? [] : [{ value: values.summaryModel, label: values.summaryModel + ' (no broker price)' }]), ...broker.data.prices.map(item => ({ value: item.model, label: item.model + ' · $' + item.inputUsdPerMTok + ' / $' + item.outputUsdPerMTok }))]} />
+          : <label>Summary model<input required maxLength={100} pattern="[A-Za-z0-9._:\-]+" value={values.summaryModel} onChange={event => change('summaryModel', event.target.value)} /></label>}
         <label>Input $ / 1M tokens<input required type="number" min="0" max="1000" step="0.000001" value={values.inputUsdPerMTok} onChange={event => change('inputUsdPerMTok', event.target.value)} /></label>
         <label>Cached input $ / 1M tokens<input required type="number" min="0" max="1000" step="0.000001" value={values.cachedInputUsdPerMTok} onChange={event => change('cachedInputUsdPerMTok', event.target.value)} /></label>
         <label>Output $ / 1M tokens<input required type="number" min="0" max="1000" step="0.000001" value={values.outputUsdPerMTok} onChange={event => change('outputUsdPerMTok', event.target.value)} /></label>
         <div className="cu-bar"><button className="cu-primary" disabled={save.busy || !form}>{save.busy ? 'Saving…' : 'Save settings'}</button>{form && <button type="button" onClick={() => setForm(null)}>Discard changes</button>}</div>
-      </form><p className="cu-muted">This inner limit applies only to summaries and is checked before the broker’s own budgets. Use the same prices as the broker for this model. Changes are recorded in the admin action log.</p></Panel>
+      </form><p className="cu-muted">This inner limit applies only to summaries and is checked before the broker’s own budgets. Choosing a model fills in the broker’s prices for it. The summaries virtual key must allow the chosen model. Changes are recorded in the admin action log.</p></Panel>
       <Panel title="Recent summary calls"><Table headings={['Time', 'Purpose', 'Model', 'Result', 'Tokens in / out', 'Cost']} empty={!data.recent.length}>{data.recent.map((row, index) => <tr key={index}><td>{date(row.createdAt)}</td><td>{row.purpose.replaceAll('_', ' ')}</td><td>{row.model}</td><td>{row.state}</td><td>{count(row.inputTokens)} / {count(row.outputTokens)}</td><td>{money(row.state === 'settled' ? row.costUsd : row.reservedUsd)}{row.state !== 'settled' && row.state !== 'failed' && <span className="cu-muted"> (reserved)</span>}</td></tr>)}</Table></Panel>
     </>}
   </>;
