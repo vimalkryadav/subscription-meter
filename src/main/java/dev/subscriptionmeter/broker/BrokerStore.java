@@ -129,8 +129,14 @@ public final class BrokerStore {
 
     /** Checks rate limit, key budget and global cap, then reserves the estimate, atomically. */
     public Admission admit(Key key, String model, boolean streaming, BigDecimal estimate, Instant now) {
+        return admit(key, model, streaming, estimate, now, null);
+    }
+
+    Admission admit(Key key, String model, boolean streaming, BigDecimal estimate, Instant now, Integer items) {
         return tx.execute(status -> {
             jdbc.queryForObject("SELECT name FROM coordination_locks WHERE name='openai_broker' FOR UPDATE", String.class);
+            if (items != null && !Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM broker_keys b JOIN virtual_key_requests r ON r.broker_key_id=b.id JOIN portal_accounts a ON a.id=r.account_id JOIN portal_key_requests k ON k.account_id=r.account_id AND k.member_id=b.member_id JOIN members m ON m.id=k.member_id WHERE b.id=? AND b.active AND b.purpose='member_direct' AND (b.expires_at IS NULL OR b.expires_at>CURRENT_TIMESTAMP) AND b.weekly_budget_usd>0 AND b.rpm>0 AND a.role='member' AND k.state='active' AND m.active)", Boolean.class, key.id())))
+                return Admission.denied(null, "invalid_api_key", "Direct API key is invalid or inactive.");
             if (key.rpm() != null) {
                 Integer recent = jdbc.queryForObject("SELECT COUNT(*) FROM broker_calls WHERE key_id=? AND created_at>? AND state<>'denied'",
                         Integer.class, key.id(), Timestamp.from(now.minusSeconds(60)));
@@ -144,6 +150,7 @@ public final class BrokerStore {
             String id = UUID.randomUUID().toString();
             jdbc.update("INSERT INTO broker_calls(id,created_at,key_id,purpose,member_id,model,streaming,state,reserved_usd) VALUES(?,?,?,?,?,?,?,'reserved',?)",
                     id, Timestamp.from(now), key.id(), key.purpose(), key.memberId(), model, streaming, estimate.setScale(6, RoundingMode.UP));
+            if (items != null) jdbc.update("UPDATE broker_calls SET operation='embeddings',item_count=? WHERE id=?", items, id);
             return Admission.allowed(id);
         });
     }
@@ -151,6 +158,11 @@ public final class BrokerStore {
     public void settle(String callId, int status, Usage usage, BigDecimal cost, long durationMs, String upstreamId) {
         jdbc.update("UPDATE broker_calls SET state='settled',status_code=?,cost_usd=?,input_tokens=?,cached_input_tokens=?,output_tokens=?,duration_ms=?,upstream_request_id=? WHERE id=?",
                 status, cost, usage.input(), usage.cachedInput(), usage.output(), durationMs, upstreamId, callId);
+    }
+
+    void settleEmbedding(String id, long prompt, long total, BigDecimal cost, long durationMs) {
+        jdbc.update("UPDATE broker_calls SET state='settled',status_code=200,cost_usd=?,input_tokens=?,total_tokens=?,duration_ms=? WHERE id=?",
+                cost, prompt, total, durationMs, id);
     }
 
     /** The provider refused before generating: nothing billed. */

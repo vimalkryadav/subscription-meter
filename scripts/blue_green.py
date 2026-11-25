@@ -114,11 +114,12 @@ def render_config(template, color, sha):
     ):
         direct = "/gateway/api/v1/" + endpoint
         pattern = rf"(?m)^( +@{name} \{{\n +method {method}\n +path )([^\n]+)(\n +\}})"
+        extra = [direct] + (["/gateway/api/v1/embeddings"] if endpoint == "responses" else [])
         def add_route(match):
             paths = match[2].split()
             if anchor not in paths:
                 raise ValueError("Missing expected gateway path; review edge configuration")
-            return match[1] + match[2] + ("" if direct in paths else " " + direct) + match[3]
+            return match[1] + match[2] + "".join(" " + route for route in extra if route not in paths) + match[3]
         text, count = re.subn(pattern, add_route, text)
         if count != 1:
             raise ValueError("Missing or ambiguous gateway matcher; review edge configuration")

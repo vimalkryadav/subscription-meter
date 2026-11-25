@@ -55,6 +55,7 @@ public final class BrokerServer {
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.createContext("/healthz", exchange -> safely(exchange, () -> health(exchange)));
         server.createContext("/v1/responses", exchange -> safely(exchange, () -> proxy(exchange)));
+        server.createContext("/v1/embeddings", exchange -> safely(exchange, () -> embeddings(exchange)));
         server.createContext("/v1/models", exchange -> safely(exchange, () -> models(exchange)));
         server.createContext("/admin/", exchange -> safely(exchange, () -> admin(exchange)));
         server.createContext("/", exchange -> safely(exchange, () -> error(exchange, 404, "not_found", "Unknown route.")));
@@ -112,6 +113,75 @@ public final class BrokerServer {
             if (key.get().allows(model)) data.add(Map.of("id", model, "object", "model", "owned_by", "openai"));
         }
         json(exchange, 200, Map.of("object", "list", "data", data));
+    }
+
+    private final java.util.concurrent.Semaphore embeddingSlots = new java.util.concurrent.Semaphore(4);
+
+    private void embeddings(HttpExchange x) throws IOException {
+        if (!x.getRequestURI().getPath().equals("/v1/embeddings") || x.getRequestURI().getRawQuery()!=null
+                || !x.getRequestMethod().equals("POST")) { error(x, 405, "method_not_allowed", "Only POST /v1/embeddings is supported."); return; }
+        var now = clock.instant();
+        var key = store.authenticate(bearer(x), now).filter(k -> k.purpose().equals("member_direct"));
+        if (key.isEmpty()) { error(x, 401, "invalid_api_key", "Invalid or inactive direct key."); return; }
+        if (!embeddingSlots.tryAcquire()) { x.getResponseHeaders().set("Retry-After", "1"); error(x, 429, "overloaded", "Embeddings capacity is busy."); return; }
+        try {
+            byte[] raw = body(x, EmbeddingRequests.MAX_BYTES);
+            if (raw == null) { error(x, 413, "request_too_large", "Request exceeds 8 MiB."); return; }
+            EmbeddingRequests.Checked checked;
+            try { checked = EmbeddingRequests.check(raw); }
+            catch (RuntimeException e) { error(x, 400, "invalid_request", "Invalid embeddings fields, input, or model."); return; }
+            var secret = realKey.get();
+            if (secret.isEmpty()) { error(x, 502, "upstream_error", "Upstream credential unavailable."); return; }
+            var admission = store.admit(key.get(), checked.model(), false, embeddingCost(raw.length), now, checked.items());
+            if (!admission.ok()) { deny(x, admission, admission.denial().equals("invalid_api_key") ? 401 : 429); return; }
+            String id = admission.callId();
+            long started = System.nanoTime();
+            // Sibling of the configured Responses URL: reuse the credential only on its configured upstream.
+            var request = HttpRequest.newBuilder(upstream.resolve("embeddings")).timeout(Duration.ofSeconds(60))
+                    .header("Authorization", "Bearer " + secret.get()).header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(raw)).build();
+            var pending = http.sendAsync(request, info -> HttpResponse.BodySubscribers.limiting(HttpResponse.BodySubscribers.ofByteArray(), MAX_JSON_RESPONSE));
+            HttpResponse<byte[]> reply;
+            try { reply = pending.get(60, java.util.concurrent.TimeUnit.SECONDS); }
+            catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException | InterruptedException e) {
+                pending.cancel(true);
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                int status = e instanceof java.util.concurrent.TimeoutException || e.getCause() instanceof HttpTimeoutException ? 504 : 502;
+                store.unknown(id, status, elapsed(started), null, "embedding_upstream_failure");
+                error(x, status, "upstream_error", "Embeddings provider unavailable."); return;
+            }
+            int status = reply.statusCode();
+            if (status != 200) {
+                if (status >= 400 && status < 500) store.failed(id, status, elapsed(started), null, "embedding_rejected");
+                else store.unknown(id, status, elapsed(started), null, "embedding_upstream_failure");
+                if (status == 429) reply.headers().firstValue("Retry-After").filter(v -> v.matches("[0-9]{1,9}")).ifPresent(v -> x.getResponseHeaders().set("Retry-After", v));
+                int publicStatus = status == 401 || status == 403 || status < 400 || status >= 500 ? (status == 504 ? 504 : 502) : status;
+                error(x, publicStatus, status == 429 ? "rate_limited" : "upstream_error", "The embeddings provider did not accept the request."); return;
+            }
+            long prompt, total;
+            try {
+                var result = BrokerRequests.JSON.readTree(reply.body());
+                var usage = result.path("usage");
+                var p = usage.path("prompt_tokens"); var t = usage.path("total_tokens");
+                var data = result.path("data");
+                if (!p.isIntegralNumber() || !t.isIntegralNumber() || !p.canConvertToLong() || !t.canConvertToLong()
+                        || p.asLong()<0 || t.asLong()<p.asLong() || !data.isArray() || data.size()!=checked.items())
+                    throw new IllegalArgumentException();
+                for (int i=0; i<data.size(); i++) if (data.get(i).path("index").asInt(-1)!=i) throw new IllegalArgumentException();
+                prompt = p.asLong(); total = t.asLong();
+            } catch (RuntimeException e) {
+                store.unknown(id, 502, elapsed(started), null, "embedding_usage_missing");
+                error(x, 502, "upstream_error", "Invalid embeddings response."); return;
+            }
+            store.settleEmbedding(id, prompt, total, embeddingCost(total), elapsed(started));
+            x.getResponseHeaders().set("Content-Type", "application/json");
+            x.sendResponseHeaders(200, reply.body().length);
+            x.getResponseBody().write(reply.body());
+        } finally { embeddingSlots.release(); }
+    }
+
+    private static BigDecimal embeddingCost(long tokens) {
+        return BigDecimal.valueOf(tokens).multiply(new BigDecimal("0.00000002")).setScale(6, java.math.RoundingMode.UP);
     }
 
     private void proxy(HttpExchange exchange) throws Exception {

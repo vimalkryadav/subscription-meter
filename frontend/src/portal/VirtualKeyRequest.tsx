@@ -63,7 +63,7 @@ export default function VirtualKeyRequest() {
     <p role="status">{loading ? 'Loading request status…' : status ? labels[status.state] : 'Request status unavailable'}</p>
     {status?.request && <p className="muted">Your request: {status.request.reason}</p>}
     {error && <p className="error" role="alert">{error}</p>}
-    {!loading && status?.state === 'active' && <ActiveKey />}
+    {!loading && status?.state === 'active' && <><ActiveKey /><EmbeddingUsage revision={revision} /></>}
     {status?.state === 'revoked' && <p>This virtual key no longer works.</p>}
     {(status?.state === 'none' || status?.state === 'rejected' || status?.state === 'revoked') &&
       <form className="access-request" onSubmit={submit}>
@@ -135,4 +135,19 @@ function ActiveKey() {
     <p role="status">{busy ? 'Working…' : message}</p>
     {error && <p className="error" role="alert">{error}</p>}
   </div>;
+}
+
+function EmbeddingUsage({ revision }: { revision: number }) {
+  const [result, setResult] = useState<{ rows?: { model: string; requests: number; items: number; promptTokens: number; totalTokens: number }[]; error?: boolean }>({});
+  useEffect(() => {
+    const abort = new AbortController();
+    api<NonNullable<typeof result.rows>>('/portal/api/virtual-key-requests/embedding-usage', { signal: abort.signal })
+      .then(rows => { if (!abort.signal.aborted) setResult({ rows }); })
+      .catch(() => { if (!abort.signal.aborted) setResult({ error: true }); });
+    return () => abort.abort();
+  }, [revision]);
+  return <section><h3>Embeddings usage · last 30 days</h3>
+    {result.error ? <p role="alert">Could not load embeddings usage.</p> : !result.rows ? <p role="status">Loading embeddings usage…</p> : !result.rows.length ? <p>No completed embeddings requests for this key.</p> :
+      <div className="scroll" tabIndex={0} role="region" aria-label="Embeddings usage"><table><thead><tr>{['Model', 'Requests', 'Items', 'Prompt tokens', 'Total tokens'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{result.rows.map(row => <tr key={row.model}><th scope="row">{row.model}</th>{[row.requests, row.items, row.promptTokens, row.totalTokens].map((number, i) => <td key={i}>{number.toLocaleString()}</td>)}</tr>)}</tbody></table></div>}
+  </section>;
 }

@@ -202,12 +202,13 @@ class DeploymentTests(unittest.TestCase):
     def test_direct_api_routes_are_added_once_to_existing_edge_allowlist(self):
         deploy = load("blue_green")
         template = (ROOT / "deploy/public-gateway.Caddyfile").read_text()
-        for endpoint in ("models", "responses"):
+        for endpoint in ("models", "responses", "embeddings"):
             template = template.replace(" /gateway/api/v1/" + endpoint, "").replace(" /gateway/openai/v1/" + endpoint, "")
         render = deploy.render_config(template, "green", "a" * 40)
         render = deploy.render_config(render, "blue", "b" * 40)
-        for endpoint in ("models", "responses"):
+        for endpoint in ("models", "responses", "embeddings"):
             self.assertEqual(render.count("/gateway/api/v1/" + endpoint), 1)
+        self.assertRegex(render, r"@messages \{\s+method POST\s+path [^\n]* /gateway/api/v1/embeddings")
         self.assertNotIn("/gateway/api/v1/*", render)
         self.assertNotIn("openai-broker", render)
         self.assertNotIn("/gateway/openai/v1/", render)

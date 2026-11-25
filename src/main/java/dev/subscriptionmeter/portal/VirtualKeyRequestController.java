@@ -60,6 +60,11 @@ public class VirtualKeyRequestController {
         return requests.decide(accountId, id, approve.asBoolean(), request);
     }
 
+    @GetMapping(MEMBER + "/embedding-usage")
+    public List<DirectVirtualKeys.EmbeddingUsage> embeddingUsage(HttpServletRequest request) {
+        return keys.embeddingUsage(actor(request));
+    }
+
     @GetMapping(MEMBER + "/key")
     public Map<String, String> key(HttpServletRequest request) {
         return Map.of("key", keys.reveal(actor(request)));
