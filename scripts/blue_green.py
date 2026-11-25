@@ -106,6 +106,11 @@ def render_config(template, color, sha):
     text = re.sub(r"reverse_proxy (?:app|app-blue|app-green):8180", "reverse_proxy app-"+color+":8180", template)
     text = re.sub(r"(handle / \{\s*root \* /srv\s*)(?:rewrite \* /releases/[0-9a-f]{40}/index.html\s*)?",
                   r"\1rewrite * /releases/"+sha+"/index.html\n        ", text)
+    # Extend the existing method-scoped allowlist, never the broker or its admin API.
+    for endpoint in ("responses", "models"):
+        existing = "/gateway/openai/v1/" + endpoint
+        direct = "/gateway/api/v1/" + endpoint
+        text = re.sub(r"(?m)^( +path [^\n]*" + re.escape(existing) + r")$", r"\1 " + direct, text)
     if "reverse_proxy app-"+color+":8180" not in text or "/releases/"+sha+"/index.html" not in text:
         raise ValueError("Unrecognized Caddy template; review manually")
     return text

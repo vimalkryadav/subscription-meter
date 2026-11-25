@@ -1,8 +1,8 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ApiError, api } from '../shared/api';
 
-type State = 'none' | 'pending' | 'approved_awaiting_provisioning' | 'rejected';
+type State = 'none' | 'pending' | 'approved_awaiting_provisioning' | 'rejected' | 'active' | 'revoked';
 type Status = { state: State; request: { reason: string } | null };
 
 const labels: Record<State, string> = {
@@ -10,6 +10,8 @@ const labels: Record<State, string> = {
   pending: 'Pending review',
   approved_awaiting_provisioning: 'Approved — awaiting provisioning',
   rejected: 'Rejected',
+  active: 'Active',
+  revoked: 'Revoked',
 };
 
 export default function VirtualKeyRequest() {
@@ -55,19 +57,82 @@ export default function VirtualKeyRequest() {
 
   return <section className="card" aria-labelledby={`${id}-title`}>
     <div className="row"><h2 id={`${id}-title`}>Direct OpenAI virtual key</h2>
-      <button className="secondary" type="button" disabled={loading || busy} onClick={() => refresh(value => value + 1)}>Refresh status</button>
+      <button className="secondary" type="button" disabled={loading || busy} onClick={() => { setStatus(undefined); setLoading(true); refresh(value => value + 1); }}>Refresh status</button>
     </div>
-    <p>Request access for direct use of the OpenAI API. This workflow records approvals only; it does not issue a key or enable API calls.</p>
+    <p>Request a virtual key for direct OpenAI API access through the gateway. An admin must provision it with a weekly budget, rate limit, and list of allowed models.</p>
     <p role="status">{loading ? 'Loading request status…' : status ? labels[status.state] : 'Request status unavailable'}</p>
     {status?.request && <p className="muted">Your request: {status.request.reason}</p>}
     {error && <p className="error" role="alert">{error}</p>}
-    {(status?.state === 'none' || status?.state === 'rejected') &&
+    {!loading && status?.state === 'active' && <ActiveKey />}
+    {status?.state === 'revoked' && <p>This virtual key no longer works.</p>}
+    {(status?.state === 'none' || status?.state === 'rejected' || status?.state === 'revoked') &&
       <form className="access-request" onSubmit={submit}>
         <label htmlFor={`${id}-reason`}>What will you use direct OpenAI access for?</label>
         <textarea id={`${id}-reason`} value={reason} maxLength={500} required disabled={busy || loading}
           aria-describedby={`${id}-help`} onChange={event => setReason(event.target.value)} />
         <p id={`${id}-help`} className="muted">Describe your use case. Do not include API keys, passwords, or private prompts.</p>
-        <button disabled={busy || loading || !reason.trim()}>{busy ? 'Submitting…' : status.state === 'rejected' ? 'Submit a new request' : 'Request a virtual key'}</button>
+        <button disabled={busy || loading || !reason.trim()}>{busy ? 'Submitting…' : status.state === 'none' ? 'Request a virtual key' : 'Submit a new request'}</button>
       </form>}
   </section>;
+}
+
+function ActiveKey() {
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const current = useRef<AbortController | null>(null);
+  const baseUrl = `${window.location.origin}/gateway/api/v1`;
+  useEffect(() => () => current.current?.abort(), []);
+
+  async function accessKey(action: 'reveal' | 'copy') {
+    if (current.current) return;
+    setError('');
+    setMessage('');
+    if (action === 'copy' && !navigator.clipboard?.writeText) {
+      setError('Clipboard unavailable. Reveal the key to copy it manually.');
+      return;
+    }
+    const controller = new AbortController();
+    current.current = controller;
+    setBusy(true);
+    try {
+      let value = key;
+      if (!value) {
+        try {
+          const result = await api<{ key: string }>('/portal/api/virtual-key-requests/key', { signal: controller.signal });
+          if (controller.signal.aborted) return;
+          if (!result?.key) throw new Error('Missing key');
+          value = result.key;
+        } catch {
+          if (!controller.signal.aborted) setError('Could not load the key. Refresh status and try again.');
+          return;
+        }
+      }
+      if (action === 'reveal') setKey(value);
+      else {
+        try {
+          await navigator.clipboard.writeText(value);
+          if (!controller.signal.aborted) setMessage('Key copied.');
+        } catch {
+          if (!controller.signal.aborted) setError('Clipboard unavailable. Reveal the key to copy it manually.');
+        }
+      }
+    } finally {
+      current.current = null;
+      if (!controller.signal.aborted) setBusy(false);
+    }
+  }
+
+  return <div>
+    <p>Set your OpenAI client’s base URL to <code>{baseUrl}</code> and use this virtual key as its API key. Keep it private.</p>
+    {key && <pre className="token-reveal" style={{ userSelect: 'all' }}>{key}</pre>}
+    <div className="actions">
+      {key ? <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(''); setError(''); setMessage(''); }}>Hide key</button>
+        : <button type="button" className="secondary" disabled={busy} onClick={() => void accessKey('reveal')}>Reveal key</button>}
+      <button type="button" className="secondary" disabled={busy} onClick={() => void accessKey('copy')}>Copy key</button>
+    </div>
+    <p role="status">{busy ? 'Working…' : message}</p>
+    {error && <p className="error" role="alert">{error}</p>}
+  </div>;
 }

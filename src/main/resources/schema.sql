@@ -221,3 +221,6 @@ CREATE TABLE IF NOT EXISTS virtual_key_requests (
 );
 CREATE INDEX IF NOT EXISTS virtual_key_requests_review_queue ON virtual_key_requests(state, requested_at, id);
 CREATE INDEX IF NOT EXISTS virtual_key_requests_decisions ON virtual_key_requests(state, decided_at, id);
+-- A direct key is usable only through its owning, approved request.
+ALTER TABLE virtual_key_requests ADD COLUMN IF NOT EXISTS broker_key_id VARCHAR(36) REFERENCES broker_keys(id);
+CREATE UNIQUE INDEX IF NOT EXISTS virtual_key_requests_broker_key ON virtual_key_requests(broker_key_id);

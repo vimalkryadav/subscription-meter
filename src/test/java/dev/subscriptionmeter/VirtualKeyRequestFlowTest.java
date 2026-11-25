@@ -46,6 +46,7 @@ class VirtualKeyRequestFlowTest {
         Files.writeString(dir.resolve("admin"), BOOTSTRAP);
         Files.writeString(dir.resolve("metrics"), UUID.randomUUID().toString());
         Files.writeString(dir.resolve("upstream"), "");
+        registry.add("meter.broker.admin-token-file", () -> dir.resolve("admin").toString());
         registry.add("meter.admin-token-file", () -> dir.resolve("admin").toString());
         registry.add("meter.metrics-token-file", () -> dir.resolve("metrics").toString());
         registry.add("meter.upstream-token-file", () -> dir.resolve("upstream").toString());
@@ -86,7 +87,7 @@ class VirtualKeyRequestFlowTest {
         var approved = mvc.perform(get(ADMIN).servletPath(ADMIN).cookie(admin.cookie())
                 .param("state", "approved_awaiting_provisioning")).andExpect(status().isOk()).andReturn();
         assertThat(JSON.readTree(approved.getResponse().getContentAsString()).get(0).path("request").path("id").asString()).isEqualTo(id);
-        mvc.perform(get(ADMIN).servletPath(ADMIN).cookie(admin.cookie()).param("state", "active")).andExpect(status().isBadRequest());
+        mvc.perform(get(ADMIN).servletPath(ADMIN).cookie(admin.cookie()).param("state", "active")).andExpect(status().isOk());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM members", Integer.class)).isEqualTo(members);
         assertThat(jdbc.queryForObject("SELECT actor_id FROM admin_action_log WHERE target_id=? AND action='virtual_key_request.approve'", String.class, id)).isEqualTo(admin.id());
         assertThat(jdbc.queryForObject("SELECT details_json FROM admin_action_log WHERE target_id=?", String.class, id))
@@ -164,6 +165,74 @@ class VirtualKeyRequestFlowTest {
     }
 
     private record Login(String id, String username, Cookie cookie, String csrf) {}
+
+    @Test void provisionsOnlyForActiveMembersAndRejectsRevokedOrInternalKeys() throws Exception {
+        Login member = login("member"), other = login("member"), admin = login("admin");
+        String id = submit(member, "Direct API testing").path("request").path("id").asString();
+        String limits = "{\"weeklyBudgetUsd\":1,\"rpm\":5,\"allowedModels\":[\"gpt-6-luna\"]}";
+        String provision = ADMIN + "/" + id + "/provision";
+        mvc.perform(write(provision, member, limits)).andExpect(status().isForbidden());
+        mvc.perform(write(provision, admin, limits)).andExpect(status().isConflict());
+        String memberId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO members(id,name,key_hash,key_prefix,rpm,concurrency_limit) VALUES(?,?,?,?,60,2)", memberId, "Test", memberId, "sm_test");
+        jdbc.update("INSERT INTO portal_key_requests(id,account_id,state,reason,member_id) VALUES(?,?,'active','test',?)", UUID.randomUUID().toString(), member.id(), memberId);
+        mvc.perform(write(decision(id), admin, "{\"approve\":true}")).andExpect(status().isOk());
+        mvc.perform(write(provision, admin, limits)).andExpect(status().isOk());
+        mvc.perform(write(provision, admin, limits)).andExpect(status().isConflict());
+        assertThat(read(MEMBER, member).path("state").asString()).isEqualTo("active");
+        String path = MEMBER + "/key";
+        String key = read(path, member).path("key").asString();
+        assertThat(key).startsWith("cuvk_");
+        mvc.perform(get(path).servletPath(path).cookie(other.cookie())).andExpect(status().isNotFound());
+        String models = "/api/v1/models";
+        mvc.perform(get(models).servletPath(models)).andExpect(status().isUnauthorized());
+        var upstream = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/responses", exchange -> {
+            try (exchange) {
+                String input = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                if (input.contains("sanitization-check")) {
+                    byte[] failure = "{\"error\":\"synthetic-private-upstream-detail\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(400, failure.length);
+                    exchange.getResponseBody().write(failure);
+                    return;
+                }
+                byte[] body = "{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body);
+            }
+        });
+        upstream.start();
+        var store = new dev.subscriptionmeter.broker.BrokerStore(jdbc, () -> java.util.Optional.of(BOOTSTRAP));
+        var broker = new dev.subscriptionmeter.broker.BrokerServer(store, () -> java.util.Optional.of("test-key"),
+                java.util.Optional::empty, "http://127.0.0.1:" + upstream.getAddress().getPort(), java.time.Clock.systemUTC());
+        try {
+            int port = broker.start("127.0.0.1", 0).getPort();
+            var controller = new dev.subscriptionmeter.web.DirectApiController(context.getBean(dev.subscriptionmeter.portal.DirectVirtualKeys.class),
+                    new dev.subscriptionmeter.deployment.DeploymentState(), "http://127.0.0.1:" + port);
+            try {
+                var direct = MockMvcBuilders.standaloneSetup(controller).build();
+                direct.perform(get(models).header("Authorization", "Bearer " + key)).andExpect(status().isOk())
+                        .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data[0].id").value("gpt-6-luna"));
+                String responses = "/api/v1/responses";
+                direct.perform(post(responses).header("Authorization", "Bearer " + key).contentType("application/json")
+                        .content("{\"model\":\"gpt-6-luna\",\"input\":\"Hello\"}")).andExpect(status().isOk());
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM broker_calls WHERE member_id=? AND purpose='member_direct' AND state='settled'", Integer.class, memberId)).isEqualTo(1);
+                direct.perform(post(responses).header("Authorization", "Bearer " + key).contentType("application/json")
+                        .content("{\"model\":\"gpt-5-mini\",\"input\":\"Hello\"}")).andExpect(status().isBadRequest());
+                direct.perform(post(responses).header("Authorization", "Bearer " + key).contentType("application/json")
+                        .content("{\"model\":\"gpt-6-luna\",\"input\":\"Hello\",\"background\":true}")).andExpect(status().isBadRequest());
+                var refused = direct.perform(post(responses).header("Authorization", "Bearer " + key).contentType("application/json")
+                        .content("{\"model\":\"gpt-6-luna\",\"input\":\"sanitization-check\"}")).andExpect(status().isBadRequest()).andReturn();
+                assertThat(refused.getResponse().getContentAsString()).contains("request_rejected").doesNotContain("synthetic-private-upstream-detail");
+            } finally { controller.close(); }
+        } finally { broker.stop(0); upstream.stop(0); }
+        jdbc.update("UPDATE broker_keys SET purpose='member_fallback' WHERE member_id=?", memberId);
+        mvc.perform(get(models).servletPath(models).header("Authorization", "Bearer " + key)).andExpect(status().isUnauthorized());
+        jdbc.update("UPDATE broker_keys SET purpose='member_direct' WHERE member_id=?", memberId);
+        mvc.perform(write(ADMIN + "/" + id + "/revoke", admin, "{}")).andExpect(status().isOk());
+        mvc.perform(get(models).servletPath(models).header("Authorization", "Bearer " + key)).andExpect(status().isUnauthorized());
+        assertThat(read(MEMBER, member).path("state").asString()).isEqualTo("revoked");
+    }
 
     private Account account(String role) {
         String id = UUID.randomUUID().toString();

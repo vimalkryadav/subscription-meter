@@ -199,6 +199,18 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("flush_interval -1", second)
         self.assertNotIn("/internal", second)
 
+    def test_direct_api_routes_are_added_once_to_existing_edge_allowlist(self):
+        deploy = load("blue_green")
+        template = (ROOT / "deploy/public-gateway.Caddyfile").read_text()
+        for endpoint in ("models", "responses"):
+            template = template.replace(" /gateway/api/v1/" + endpoint, "")
+        render = deploy.render_config(template, "green", "a" * 40)
+        render = deploy.render_config(render, "blue", "b" * 40)
+        for endpoint in ("models", "responses"):
+            self.assertEqual(render.count("/gateway/api/v1/" + endpoint), 1)
+        self.assertNotIn("/gateway/api/v1/*", render)
+        self.assertNotIn("openai-broker", render)
+
     def test_bootstrap_only_pauses_new_gateway_and_auth_routes(self):
         bootstrap=load("bootstrap_blue_green")
         initial=(ROOT/"deploy/public-gateway.Caddyfile").read_text()
