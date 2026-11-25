@@ -64,3 +64,13 @@ test('capture incomplete/pending/expired are distinct and chart epochs render as
   assert.equal(date(epoch), new Date(epoch).toLocaleString()); assert.equal(date(0), new Date(0).toLocaleString());
   assert.equal(date('not a date'), '—'); assert.equal(date(null), '—');
 });
+
+
+test('table paging preserves all rows and clamps when a filtered result shrinks', async () => {
+  const source = await readFile(new URL('../src/shared/pageWindow.ts', import.meta.url), 'utf8');
+  const { pageWindow } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+  assert.deepEqual(pageWindow(0, 5, 10), { page: 0, pages: 1, start: 0, end: 0 });
+  assert.deepEqual(pageWindow(51, 2, 25), { page: 2, pages: 3, start: 50, end: 51 });
+  assert.deepEqual(pageWindow(11, 3, 10), { page: 1, pages: 2, start: 10, end: 11 });
+  assert.deepEqual(pageWindow(10, 1, 10), { page: 0, pages: 1, start: 0, end: 10 });
+});

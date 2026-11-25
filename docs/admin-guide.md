@@ -6,7 +6,7 @@ This guide explains how to operate the deployed platform, investigate requests, 
 
 1. Open the platform's current Cloudflare HTTPS origin. Sign in with an administrator account. The admin console is `/manage`.
 2. Open **Operations**. Check the report time, gateway readiness, audit worker readiness, projection lag and disk headroom. An old green report is not evidence of current health.
-3. Open **Access requests** to review pending users. Approve only the intended person, with appropriate requests-per-minute and concurrency limits.
+3. Open **Members & keys → Access requests** to review pending users. Approve only the intended person, with appropriate requests-per-minute and concurrency limits.
 4. Have the member claim their own token from the member portal. Send them the platform URL, not the upstream subscription credential.
 5. Open **Connection** and use its Claude Code settings. The public model base URL ends in `/gateway`.
 6. After a member sends a request, open **Request explorer**. Confirm their member ID, provider, response status, usage coverage and capture state.
@@ -66,13 +66,13 @@ If the dashboard redirects unexpectedly, sign in again and reload it. A 403 usua
 | Request explorer | Finding a request and examining metadata, capture and events | Time range, filters, request ID, capture state |
 | Usage & value | Account quota observations, member shares, categories, value and expenses | Which denominator and time window each panel uses |
 | Members & keys | Operator-managed keys, current limits and revocation | Correct member ID, active state and key prefix |
-| Access requests | Portal approval, rejection and revocation | Intended account and current request state |
+| Members & keys → Access requests | Portal approval, rejection and revocation | Intended account and current request state |
 | Accounts & sessions | Account search, session sign-out and admin action log | Account ID versus member ID |
 | Operations | Health, projection, storage, backups and streaming diagnostics | Report age before interpreting status |
 | Connection | Member terminal settings and gateway capture/credential status | Current hostname and `/gateway` suffix |
 | Admin guide & MCP | Searchable operating instructions, setup and tool reference | Choose the relevant guide and section |
 
-Navigation groups monitoring, access management and workspace tools. Metrics separates Overview, Performance and Errors & capture. Usage & value separates Member usage, Plan allowance and Subscription expenses. Operations opens on Health; Capacity, Recovery and Stream diagnostics load when selected. Request detail fetches retained input/output only when you open that section. Search and status filters narrow member and access-request lists, while key creation and secondary metadata expand on demand.
+The sidebar groups related views: **Overview** (Sessions and Metrics), **Usage & value** (Leaderboard), **Members & keys** (Access requests, Virtual key requests, and Accounts & sessions), **Routing & API** (OpenAI API), and **Operations & setup** (Connection and Admin guide & MCP). Request explorer stays a direct link. Existing view links open the corresponding subview. Long tables offer 10, 25, or 50 rows per page within their loaded results; Request explorer keeps its server-side cursor pagination. Metrics separates Overview, Performance and Errors & capture. Usage & value separates Member usage, Plan allowance and Subscription expenses. Operations opens on Health; Capacity, Recovery and Stream diagnostics load when selected. Request detail fetches retained input/output only when you open that section. Search and status filters narrow member and access-request lists, while key creation and secondary metadata expand on demand.
 
 Loading sections display **Loading…** instead of sample charts or empty-state placeholders; report refreshes preserve their previous height to reduce jumps. Empty states appear only after a successful response confirms there is no matching data.
 
@@ -84,7 +84,7 @@ A normal onboarding sequence is:
 
 1. The person registers a portal account and signs in.
 2. They submit **Request access** with a reason.
-3. You find the pending item under **Access requests**, verify the username and display name, and choose RPM and concurrency.
+3. You find the pending item under **Members & keys → Access requests**, verify the username and display name, and choose RPM and concurrency.
 4. Choose **Approve** or **Reject**. Only pending requests can be decided; a conflict means the state changed and should be refreshed.
 5. An approved member uses **Get my auth token** in their own portal. The full platform token stays visible in their portal while it is active, and administrators can view any active member's key again with **Show key** under Members & keys. Each reveal is recorded as `member.key.reveal` in the admin action log. The gateway authenticates with a SHA-256 hash; a separate AES-GCM copy, keyed from the administrator secret, lets the portal show it again. Tokens issued before this change must be replaced once to become viewable, and changing the administrator secret has the same effect.
 6. They set their terminal variables using **Connection** and keep their token private.
@@ -316,7 +316,7 @@ CONTROL_USAGE_DOCKER_SUDO=1 python3 scripts/backup_database.py --verify-latest
 
 ## Session summaries and the OpenAI API key
 
-**Sessions** (under Monitor) lists each member's Claude Code sessions from the last 1, 7 or 30 days. Each row shows a short summary of what the member worked on and a category. Requests are grouped by the `x-claude-code-session-id` header Claude Code sends. A session is summarized once it has been idle for 30 minutes, and summarized again if work resumes. Member traffic is never modified.
+**Overview → Sessions** lists each member's Claude Code sessions from the last 1, 7 or 30 days. Each row shows a short summary of what the member worked on and a category. Requests are grouped by the `x-claude-code-session-id` header Claude Code sends. A session is summarized once it has been idle for 30 minutes, and summarized again if work resumes. Member traffic is never modified.
 
 The summarizer reads the newest main-conversation request already recorded for the session. It sends OpenAI only the member's prompts, short assistant replies, the names and targets of tools used, and the project folder name. System prompts, tool outputs and file contents are not sent. Requests are made with `store: false`. The member portal tells members about this.
 
@@ -415,6 +415,15 @@ Members and administrators can switch between 7- and 30-day gateway usage and se
 
 Members can request direct OpenAI-compatible access from **Virtual key**. Administrators review these under **Virtual key requests**. Choose **Provision key** for pending or previously approved requests. The member needs active workspace access. Set a weekly budget, RPM, and at least one priced model. Members reveal or copy their own key in the portal; admins can revoke it from the review queue.
 
-Use the portal's base URL (`/gateway/api/v1` on the public edge) with the issued virtual key as `OPENAI_API_KEY`. Only `GET /models` and `POST /responses` are supported. Responses requests accept stateless text input, optional instructions, and streaming; Chat Completions, hosted tools, and stored conversations are not supported. Direct requests are paid immediately and use the broker's per-key limits and shared weekly cap. They do not use Claude or Codex subscription quota. Internal keys and broker admin endpoints are not exposed by this route.
+Use the portal's base URL (`/gateway/api/v1` on the public edge) with the issued virtual key as `OPENAI_API_KEY`. `GET /models`, `POST /responses`, and `POST /embeddings` are supported. Responses requests accept stateless text input, optional instructions, and streaming; Chat Completions, hosted tools, and stored conversations are not supported. Direct requests are paid immediately and use the broker's per-key limits and shared weekly cap. They do not use Claude or Codex subscription quota. Internal keys and broker admin endpoints are not exposed by this route.
 
-**Plan allowance** also shows Codex’s five-hour and weekly windows when reported in trusted response headers. Unreported windows stay **Unknown**; refreshing does not poll Codex.
+**Overview** shows Codex limits at a glance. **Usage & value → Plan allowance** shows detailed breakdowns for Codex’s five-hour and weekly windows when reported in trusted response headers. Unreported windows stay **Unknown**; refreshing does not poll Codex.
+
+
+### Direct embeddings
+
+Send `POST /gateway/api/v1/embeddings` with an active, provisioned direct virtual key. The endpoint-specific model allowlist starts with `text-embedding-3-small`; no separate credential or change to the key’s Responses model list is needed. The private broker sends the request to the configured upstream’s `/v1/embeddings` route. Responses behavior is unchanged.
+
+Embeddings share the key’s requests-per-minute limit and both weekly budgets with Responses. Requests are limited to 8 MiB and 2,048 strings; the broker’s upstream deadline is 60 seconds. The current price used for reservations and settlement is $0.02 per million tokens. The **Virtual key** tab shows completed embeddings calls, item counts, and observed prompt and total tokens by model for the current key over the last 30 days. The gateway and broker do not persist input text or returned vectors. Upstream error text is replaced with a safe message.
+
+Deploy migration V016 and the app release, then explicitly update the shared broker to the same release using `scripts/deploy_broker.py`; normal blue-green releases do not replace it. Verify the configured provider supports embeddings before putting a member workload on the endpoint.
