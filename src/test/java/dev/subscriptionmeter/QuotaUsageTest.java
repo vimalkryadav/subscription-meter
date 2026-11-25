@@ -106,11 +106,22 @@ class QuotaUsageTest {
         snapshot("future", "primary", "seven_day", 90, now.plusSeconds(1), now.plusSeconds(86400), true);
         snapshot("other", "other", "seven_day", 50, now, now.plusSeconds(86400), true);
         var windows = service.report(now, "").windows();
-        assertThat(windows).filteredOn(w -> w.bucket().equals("seven_day")).hasSize(2);
+        assertThat(windows).filteredOn(w -> w.provider().equals("anthropic") && w.bucket().equals("seven_day")).hasSize(2);
         assertThat(windows.stream().filter(w -> w.account().equals("primary")).findFirst().orElseThrow().usedPercent()).isEqualByComparingTo("20");
-        assertThat(service.report(now, "openai").windows()).isEmpty();
+        assertThat(service.report(now, "openai").windows()).hasSize(2).allSatisfy(w -> assertThat(w.freshness()).isEqualTo("unavailable"));
         jdbc.update("DELETE FROM provider_quota_snapshots");
-        assertThat(service.report(now, "").windows()).isEmpty();
+        assertThat(service.report(now, "anthropic").windows()).isEmpty();
+    }
+
+    @Test void reportsCodexWeeklyWithoutInventingAFiveHourLimit() {
+        jdbc.update("INSERT INTO provider_quota_snapshots(id,provider,upstream_account,bucket,used_percentage,observed_at,resets_at,source,trusted) VALUES('codex-week','openai','codex','seven_day',12,?,?,'codex_headers_v1',TRUE)", Timestamp.from(now.minusSeconds(60)), Timestamp.from(now.plusSeconds(86400)));
+        jdbc.update("INSERT INTO provider_quota_snapshots(id,provider,upstream_account,bucket,used_percentage,observed_at,resets_at,source,trusted) VALUES('other-week','openai','codex','seven_day',99,?,?,'other_source',TRUE)", Timestamp.from(now), Timestamp.from(now.plusSeconds(86400)));
+        var windows = service.report(now, "openai").windows();
+        assertThat(windows).extracting(QuotaUsageService.Window::bucket).containsExactly("five_hour", "seven_day");
+        assertThat(windows.getFirst().freshness()).isEqualTo("unavailable");
+        assertThat(windows.getFirst().usedPercent()).isNull();
+        assertThat(windows.getLast().usedPercent()).isEqualByComparingTo("12");
+        assertThat(windows.getLast().resetsAt()).isEqualTo(now.plusSeconds(86400));
     }
 
     @Test void invalidResetCannotProduceMemberAttribution() {

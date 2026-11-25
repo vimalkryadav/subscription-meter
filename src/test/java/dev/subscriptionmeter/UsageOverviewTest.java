@@ -76,7 +76,7 @@ class UsageOverviewTest {
         mvc.perform(get(PORTAL).servletPath(PORTAL).cookie(ownerCookie)).andExpect(status().isUnauthorized());
     }
 
-    @Test void aggregatesOnlyGatewayMessagesAndRanksAnonymousMembers() throws Exception {
+    @Test void aggregatesOnlyGatewayMessagesAndRanksByDisplayName() throws Exception {
         var viewer = accounts.register("usage-viewer", "Private Viewer", "a strong test password");
         var viewerCookie = cookie(viewer);
         var admin = accounts.register("usage-admin", "Private Admin", "a strong test password");
@@ -88,6 +88,9 @@ class UsageOverviewTest {
         jdbc.update("UPDATE members SET active=FALSE WHERE id=?", revoked);
         jdbc.update("INSERT INTO portal_key_requests(id,account_id,state,reason,member_id) VALUES(?,?,'active','test',?)",
                 UUID.randomUUID().toString(), viewer.id(), mine);
+        var peerAccount = accounts.register("usage-peer", "Peer Display", "a strong test password");
+        jdbc.update("INSERT INTO portal_key_requests(id,account_id,state,reason,member_id) VALUES(?,?,'active','test',?)",
+                UUID.randomUUID().toString(), peerAccount.id(), peer);
         jdbc.update("INSERT INTO routing_deployments(id,name,kind,account,priority,weight,enabled,updated_by) "
                 + "VALUES('codex-extra','Private Extra Deployment','codex','extra-account',1,100,FALSE,'test')");
         message(mine, "/v1/messages", "anthropic", "primary", 1, 10);
@@ -112,10 +115,10 @@ class UsageOverviewTest {
             {"days":7,"own":[{"tier":"claude","requests":1,"tokens":10},
             {"tier":"codex","requests":2,"tokens":20},{"tier":"paid","requests":1,"tokens":30},
             {"tier":"other","requests":1,"tokens":40}],"leaderboard":[
-            {"label":"Member 1","requests":1,"tokens":300,"you":false},
-            {"label":"You","requests":5,"tokens":100,"you":true}]}
+            {"label":"Peer Display","requests":1,"tokens":300,"you":false},
+            {"label":"Private Viewer","requests":5,"tokens":100,"you":true}]}
             """));
-        assertThat(portal).doesNotContain(mine, peer, revoked, viewer.id(), "Private", "broker", "cost", "capture");
+        assertThat(portal).doesNotContain(mine, peer, revoked, viewer.id(), peerAccount.id(), "usage-peer", "usage-viewer", "Private Gateway Member", "Private Peer", "broker", "cost", "capture");
         var longer = JSON.readTree(read(PORTAL, viewerCookie, "30"));
         assertThat(longer.path("days").asInt()).isEqualTo(30);
         assertThat(longer.path("own").get(2).path("tokens").asInt()).isEqualTo(130);
@@ -125,8 +128,8 @@ class UsageOverviewTest {
             {"tier":"codex","requests":2,"tokens":20},{"tier":"paid","requests":1,"tokens":30},
             {"tier":"other","requests":1,"tokens":40}],"leaderboard":[
             {"label":"Member 1","requests":1,"tokens":500,"you":false},
-            {"label":"Member 2","requests":1,"tokens":300,"you":false},
-            {"label":"Member 3","requests":5,"tokens":100,"you":false}]}
+            {"label":"Peer Display","requests":1,"tokens":300,"you":false},
+            {"label":"Private Viewer","requests":5,"tokens":100,"you":false}]}
             """));
 
         jdbc.update("UPDATE members SET active=FALSE WHERE id=?", mine);
