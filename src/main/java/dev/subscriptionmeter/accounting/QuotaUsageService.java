@@ -30,11 +30,13 @@ public class QuotaUsageService {
     public Report report(Instant now, String provider) {
         var snapshots = jdbc.queryForList("""
             SELECT q.* FROM provider_quota_snapshots q
-            WHERE q.trusted=TRUE AND q.provider='anthropic' AND (?='' OR q.provider=?)
-              AND q.bucket IN ('five_hour','seven_day','seven_day_fable') AND q.observed_at<=?
+            WHERE q.trusted=TRUE AND (?='' OR q.provider=?) AND q.observed_at<=?
+              AND ((q.provider='anthropic' AND q.bucket IN ('five_hour','seven_day','seven_day_fable'))
+                OR (q.provider='openai' AND q.source='codex_headers_v1' AND q.bucket IN ('five_hour','seven_day')))
               AND NOT EXISTS (SELECT 1 FROM provider_quota_snapshots newer
                 WHERE newer.trusted=TRUE AND newer.provider=q.provider
                   AND newer.upstream_account=q.upstream_account AND newer.bucket=q.bucket
+                  AND (q.provider<>'openai' OR newer.source='codex_headers_v1')
                   AND newer.observed_at<=?
                   AND (newer.observed_at>q.observed_at OR (newer.observed_at=q.observed_at AND newer.id>q.id)))
             ORDER BY q.upstream_account,q.bucket LIMIT 100
@@ -57,16 +59,26 @@ public class QuotaUsageService {
                 members.stream().mapToLong(Member::requests).sum(), members.stream().mapToLong(Member::usageObserved).sum(),
                 members.stream().mapToLong(Member::usageComplete).sum(), tokens, members);
         }).toList());
-        // A missing scoped observation is visible, but cannot borrow another bucket's percentage or reset.
-        for (String account : snapshots.stream().map(q -> q.get("upstream_account").toString()).distinct().toList()) {
-            for (String bucket : List.of("seven_day","seven_day_fable")) {
-                if (windows.stream().noneMatch(w -> w.account().equals(account) && w.bucket().equals(bucket)))
-                    windows.add(new Window("anthropic",account,bucket,bucket.equals("seven_day_fable")?"fable":"all_models",
-                        null,null,null,null,"unavailable",null,null,null,null,null,null,List.of()));
+        // Missing windows are never inferred from a different window or provider.
+        var claudeAccounts = windows.stream().filter(w -> w.provider().equals("anthropic")).map(Window::account).distinct().toList();
+        for (String account : claudeAccounts) {
+            for (String bucket : List.of("seven_day", "seven_day_fable")) addMissing(windows, "anthropic", account, bucket);
+        }
+        if (provider.isEmpty() || provider.equals("openai")) {
+            var codexAccounts = new TreeSet<>(jdbc.queryForList("SELECT account FROM routing_deployments WHERE kind='codex' AND enabled=TRUE", String.class));
+            windows.stream().filter(w -> w.provider().equals("openai")).map(Window::account).forEach(codexAccounts::add);
+            for (String account : codexAccounts) {
+                for (String bucket : List.of("five_hour", "seven_day")) addMissing(windows, "openai", account, bucket);
             }
         }
-        windows.sort(Comparator.comparing(Window::account).thenComparing(Window::bucket));
+        windows.sort(Comparator.comparing(Window::provider).thenComparing(Window::account).thenComparing(Window::bucket));
         return new Report(now, "unknown", windows);
+    }
+
+    private static void addMissing(List<Window> windows, String provider, String account, String bucket) {
+        if (windows.stream().noneMatch(w -> w.provider().equals(provider) && w.account().equals(account) && w.bucket().equals(bucket)))
+            windows.add(new Window(provider, account, bucket, bucket.equals("seven_day_fable") ? "fable" : "all_models",
+                null, null, null, null, "unavailable", null, null, null, null, null, null, List.of()));
     }
 
     private List<Member> members(String provider, String account, Instant from, Instant to, boolean fable) {

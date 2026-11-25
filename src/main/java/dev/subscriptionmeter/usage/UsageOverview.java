@@ -23,7 +23,9 @@ public class UsageOverview {
         )
         """;
     private static final String SELECT = """
-        SELECT member_id, own_usage, ranked, tier, COUNT(*) AS requests, SUM(tokens) AS tokens
+        SELECT member_id, own_usage, ranked, tier, COUNT(*) AS requests, SUM(tokens) AS tokens,
+               (SELECT MIN(a.display_name) FROM portal_key_requests k JOIN portal_accounts a ON a.id = k.account_id
+                WHERE k.member_id = usage_rows.member_id) AS display_name
         FROM (
             SELECT r.member_id, %s AS own_usage, %s AS ranked,
                 CASE
@@ -63,7 +65,7 @@ public class UsageOverview {
     private record Totals(long requests, long tokens) {
         Totals plus(Totals other) { return new Totals(requests + other.requests, tokens + other.tokens); }
     }
-    private record RankedMember(String id, boolean you, Totals totals) {}
+    private record RankedMember(String id, String displayName, boolean you, Totals totals) {}
 
     private Result read(String accountId, int days, boolean admin) {
         Instant now = Instant.now();
@@ -79,8 +81,8 @@ public class UsageOverview {
             if (own) tiers.merge(rs.getString("tier"), usage, Totals::plus);
             if (rs.getBoolean("ranked")) {
                 String id = rs.getString("member_id");
-                ranked.merge(id, new RankedMember(id, own && !admin, usage),
-                        (a, b) -> new RankedMember(a.id(), a.you(), a.totals().plus(b.totals())));
+                ranked.merge(id, new RankedMember(id, rs.getString("display_name"), own && !admin, usage),
+                        (a, b) -> new RankedMember(a.id(), a.displayName(), a.you(), a.totals().plus(b.totals())));
             }
         }, admin ? new Object[]{from, through} : new Object[]{accountId, from, through});
 
@@ -95,7 +97,7 @@ public class UsageOverview {
         var leaderboard = new ArrayList<LeaderboardEntry>(ordered.size());
         for (int i = 0; i < ordered.size(); i++) {
             var member = ordered.get(i);
-            leaderboard.add(new LeaderboardEntry(member.you() ? "You" : "Member " + (i + 1),
+            leaderboard.add(new LeaderboardEntry(member.displayName() == null ? "Member " + (i + 1) : member.displayName(),
                     member.totals().requests(), member.totals().tokens(), member.you()));
         }
         return new Result(own, List.copyOf(leaderboard), days);
