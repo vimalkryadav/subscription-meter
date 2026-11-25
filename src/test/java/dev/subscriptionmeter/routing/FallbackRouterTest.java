@@ -144,9 +144,30 @@ class FallbackRouterTest {
         claudeOutOfQuota();
         var reply = send("s1", "claude-opus-5-5");
         assertThat(reply.status()).isEqualTo(429);
-        assertThat(reply.routedProvider()).isNull();
+        assertThat(reply.routedProvider()).isEqualTo("anthropic");
         assertThat(anthropic.calls.getFirst()).doesNotContainKeys(FallbackRouter.MEMBER, FallbackRouter.SESSION).containsKey("content-type");
         assertThat(codex.bodies).isEmpty();
+    }
+
+    @Test void directClaudeRespectsTheCapWhileRoutingIsOff() throws Exception {
+        values = new Values(true, false);
+        deployments.set(0, new Deployment("claude-primary", "Claude", "anthropic", "primary", 1, 100, true, 1, null, null));
+        try (var first = send("s1", "claude-opus-5-5"); var second = send("s2", "claude-opus-5-5")) {
+            assertThat(first.status()).isEqualTo(200);
+            assertThat(second.status()).isEqualTo(503);
+            assertThat(second.routedProvider()).isEqualTo("local");
+            assertThat(anthropic.calls).hasSize(1);
+        }
+        assertThat(health.view("claude-primary").inFlight()).isZero();
+    }
+
+    @Test void explicitGptReportsAnInvalidCodexCredentialWithoutSpending() throws Exception {
+        codex.status = 401;
+        try (var reply = send("s1", "gpt-6.2-astra")) {
+            assertThat(reply.status()).isEqualTo(502);
+            assertThat(body(reply)).contains("could not authenticate");
+        }
+        assertThat(broker.bodies).isEmpty();
     }
 
     @Test void claudeServesWhenItHasQuota() throws Exception {
@@ -212,6 +233,51 @@ class FallbackRouterTest {
         var off = send("s1", "gpt-6.2-astra");
         assertThat(off.status()).isEqualTo(400);
         assertThat(body(off)).contains("turned off");
+    }
+
+    @Test void explicitGptNeverUsesPaidFallbackWhenCodexRefuses() throws Exception {
+        codex.status = 429;
+        try (var reply = send("s1", "gpt-6.2-astra")) {
+            assertThat(reply.status()).isEqualTo(429);
+        }
+        assertThat(anthropic.calls).isEmpty();
+        assertThat(broker.bodies).isEmpty();
+    }
+
+    @Test void paidTransientFailureIsNotReplayed() throws Exception {
+        claudeOutOfQuota();
+        codex.status = 429;
+        broker.status = 503;
+        try (var reply = send("s1", "claude-opus-5-5")) {
+            assertThat(reply.status()).isGreaterThanOrEqualTo(400);
+        }
+        assertThat(broker.bodies).hasSize(1);
+        assertThat(sleeps).isEmpty();
+    }
+
+    @Test void codexPolicyDenialDoesNotTriggerPaidFallback() throws Exception {
+        claudeOutOfQuota();
+        codex.status = 403;
+        try (var reply = send("s1", "claude-opus-5-5")) {
+            assertThat(reply.status()).isEqualTo(403);
+        }
+        assertThat(broker.bodies).isEmpty();
+    }
+
+    @Test void oneMembersBrokerRejectionDoesNotBlockOtherMembers() throws Exception {
+        claudeOutOfQuota();
+        codex.status = 429;
+        broker.status = 429;
+        try (var first = send("s1", "claude-opus-5-5")) {
+            assertThat(first.status()).isEqualTo(429);
+        }
+        broker.status = 200;
+        var otherMember = headers("s2");
+        otherMember.put(FallbackRouter.MEMBER, "m2");
+        try (var second = router.route(anthropic, "POST", "/v1/messages", otherMember, request("claude-opus-5-5", true))) {
+            assertThat(second.routedAccount()).isEqualTo("broker");
+        }
+        assertThat(broker.bodies).hasSize(2);
     }
 
     @Test void queryStringsAndCountTokensAreHandled() throws Exception {
@@ -304,7 +370,10 @@ class FallbackRouterTest {
         try (var busy = health.acquire("codex-primary")) {
             assertThat(send("s1", "claude-opus-5-5").routedAccount()).isEqualTo("primary"); // Codex at its cap: Claude serves
             claudeOutOfQuota();
-            assertThat(send("s2", "claude-opus-5-5").routedAccount()).isEqualTo("codex"); // still ahead of the API key
+            try (var reply = send("s2", "claude-opus-5-5")) {
+                assertThat(reply.status()).isEqualTo(503);
+            }
+            assertThat(codex.bodies).isEmpty();
             assertThat(broker.bodies).isEmpty();
         }
     }

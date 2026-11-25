@@ -320,7 +320,7 @@ CONTROL_USAGE_DOCKER_SUDO=1 python3 scripts/backup_database.py --verify-latest
 
 The summarizer reads the newest main-conversation request already recorded for the session. It sends OpenAI only the member's prompts, short assistant replies, the names and targets of tools used, and the project folder name. System prompts, tool outputs and file contents are not sent. Requests are made with `store: false`. The member portal tells members about this.
 
-**OpenAI API** (under Manage) shows this week's spending against the weekly cap, which defaults to $100. It also holds the summary model and its prices. Weeks run Monday 00:00 to Monday 00:00 UTC. Each call reserves its worst-case cost under a database lock before it is sent, then settles to the actual cost. Once the cap is reached, no new calls are made until the cap is raised or the week resets. Calls with an unknown outcome, such as a timeout, keep counting their reservation. Changes are recorded in the admin action log. Set a budget limit on the key in OpenAI's dashboard as a second safeguard.
+**OpenAI API** (under Manage) shows this week's spending against the weekly cap, which defaults to $100. It also holds the summary model and its prices. Weeks run Monday 00:00 to Monday 00:00 UTC. Each call reserves an estimated cost under a database lock before it is sent, then settles based on reported usage and configured prices. Once the cap is reached, no new calls are made until the cap is raised or the week resets. Calls with an unknown outcome, such as a timeout, keep counting their reservation. Changes are recorded in the admin action log. Set a budget limit on the key in OpenAI's dashboard as a second safeguard.
 
 The gateway calls OpenAI through the key broker (below) using a **virtual key** read from `secrets/openai-virtual-key` (`/run/secrets/openai-virtual-key` in each app slot). The file is re-read on every use, so no restart is needed. An empty file disables summaries. The summaries limit on this page is an inner limit for summaries only. The broker's weekly cap covers all OpenAI spending.
 
@@ -330,7 +330,7 @@ The broker (`openai-broker`) is a separate container and the only one given the 
 
 1. Checks the virtual key: active, not expired, and allowed to use the requested model.
 2. Refuses anything that could bypass the budget: models without a price, hosted tools billed per use (only `function`/`custom` tools pass), background jobs, and stored-conversation references. It forces `store: false` and caps `max_output_tokens` at the key's limit.
-3. Checks the key's requests-per-minute limit, the key's weekly budget and the global weekly cap. It reserves the worst-case cost under a database lock, so concurrent calls cannot jointly overspend.
+3. Checks the key's requests-per-minute limit, the key's weekly budget and the global weekly cap. It reserves an estimated cost under a database lock before admission. Estimates and configured prices can differ from actual provider charges, so this is not a guaranteed billing ceiling.
 4. Forwards the call with the real key, passes the response (including streamed events) back unchanged, and settles the actual cost from the reported usage. Calls whose usage is unknown keep their reservation.
 5. Records every call in `broker_calls`, including denied ones: key, purpose, member, model, tokens, cost, status, duration and OpenAI request ID.
 
@@ -383,21 +383,21 @@ Accounting is unchanged. Requests record `provider=openai`, `upstream_account=co
 
 ### Routing engine: deployments, health and strategies
 
-Routing works over a **deployment registry** (Routing → Deployments). Seeded deployments: the Claude subscription and the Codex login at **priority 1**, and the OpenAI API key (member keys via the broker) at **priority 2**. A lower priority number is always tried first, so the API key is used only when no priority-1 deployment can serve. For each new session the engine:
+Routing works over a **deployment registry** (Routing → Deployments). Seeded deployments: the Claude subscription and the Codex login at **priority 1**, and the OpenAI API key (member keys via the broker) at **priority 2**. Priority orders deployments within a tier. The paid broker always follows all subscriptions, regardless of priority. For each new session the engine:
 
 1. **Filters** out deployments that are disabled, not connected, cooling down, out of quota until their reset, don't serve the mapped model (Codex's model list and the broker's price table are checked), or have a context window smaller than the request.
-2. **Orders** the rest: priority first. Deployments at their concurrency cap are busy, not unavailable: they go last within their priority, but never behind a lower priority. Next comes the session's current deployment, then the strategy:
+2. **Orders** the rest: priority first. Routing enforces concurrency caps per app instance. If a subscription is busy and no other subscription can serve, the gateway returns HTTP 503 rather than using the paid broker. The broker always ranks after subscription deployments, regardless of its configured priority. Explicit GPT model selections use Codex subscriptions only. Next comes the session's current deployment, then the strategy:
    - **Balanced:** quota headroom × weight × (1 − error rate) × load × latency
    - **Claude first:** Claude subscriptions first, then the balanced score
    - **Lowest latency:** time to first byte
    - **Least busy:** requests in flight
 3. **Attempts** each in order, classifying every outcome:
-   - **Transient** (529, 500/502/503/504, connection errors, no response headers within the first-byte timeout): retried with backoff (0.5 s, 1.5 s, honouring short `retry-after`). After the configured number of failures within a minute, the deployment **cools down** for the configured time.
+   - **Transient** (529, 500/502/503/504, connection errors, no response headers within the configured timeout): retried with backoff (0.5 s, 1.5 s, honouring short `retry-after`). After the configured number of failures within a minute, the deployment **cools down** for the configured time.
    - **Quota** (429): the deployment is skipped until the provider's reported reset.
    - **Context too long:** the next deployment is tried.
-   - **Other refusals:** returned to the member. A Codex-specific refusal tries the next deployment.
+   - **Other refusals:** returned to the member. An expired or invalid Codex credential (HTTP 401) allows another deployment to be tried. Policy denials and other non-retryable refusals do not trigger paid fallback. Paid calls are never retried automatically.
 
-   A request is only retried elsewhere before any byte reaches the member. Requests in flight count until the reply finishes streaming.
+   A request is only retried elsewhere before any byte reaches the member. Requests in flight count until the reply finishes streaming. OpenAI upstream body reads also have an idle timeout; interruptions after streaming starts do not trigger a provider switch.
 
 Health (in flight, rolling time to first byte and error rate, cooldowns, quota blocks, last error) is tracked per app instance and shown on the page. It is published as Prometheus metrics: `meter_routing_attempts_total{deployment,outcome}`, `meter_routing_inflight{deployment}` and `meter_routing_first_byte{deployment}`.
 

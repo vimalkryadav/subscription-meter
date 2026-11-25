@@ -42,15 +42,16 @@ public final class RoutingPolicy {
         var known = new HashMap<String, Signals>();
         for (var d : deployments) {
             if (!d.enabled()) continue;
-            if (request.explicitOpenAI() && d.anthropic()) continue; // an OpenAI model was asked for
+            // Explicit model selection is subscription-only; it must not bypass the paid-fallback gate.
+            if (request.explicitOpenAI() && !d.codex()) continue;
             var s = signals.apply(d);
             known.put(d.id(), s);
-            if (!s.health().usable(now) || !s.servesModel()) continue;
+            if (!s.health().usable(now) || !s.servesModel() || (!d.broker() && s.usedPercent() != null && s.usedPercent() >= 100)) continue;
             if (d.contextWindowTokens() != null && request.estimatedTokens() > d.contextWindowTokens()) continue;
             if (d.maxConcurrency() != null && s.health().inFlight() >= d.maxConcurrency()) saturated.add(d.id());
             candidates.add(d);
         }
-        Comparator<Deployment> byPriority = Comparator.comparingInt(Deployment::priority);
+        Comparator<Deployment> byPriority = Comparator.comparing(Deployment::broker).thenComparingInt(Deployment::priority);
         // At its concurrency cap a deployment is busy, not unavailable: last within its priority, never behind a lower priority.
         Comparator<Deployment> notSaturated = Comparator.comparing(d -> saturated.contains(d.id()));
         Comparator<Deployment> assignedFirst = Comparator.comparing(d -> !d.id().equals(request.assignedDeployment()));

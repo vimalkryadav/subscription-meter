@@ -61,8 +61,8 @@ export default function Routing() {
         <Stat title="Member API keys" value={count(data.memberKeys)} note={'Created on first use · ' + money(data.memberWeeklyBudgetUsd) + ' / week each'} />
       </div>
 
-      <Panel title="Deployments"><p className="cu-muted">Priority 1 deployments are always tried before priority 2. Within a priority, the strategy decides; a session’s current deployment comes first. Busy deployments (at their concurrency cap) are still tried before a lower priority.</p>
-        <Table headings={['Deployment', 'Priority / weight', 'Status', 'Quota used', 'Sessions / in flight', 'First byte', 'Error rate', '']} empty={!data.deployments.length}>{data.deployments.map(d => <tr key={d.id}>
+      <Panel title="Deployments"><p className="cu-muted">Subscriptions are always tried before the paid API key, regardless of configured priority. Within a priority, the strategy decides; a session’s current deployment comes first. Concurrency caps apply per app instance. A busy subscription does not trigger paid fallback.</p>
+        <Table headings={['Deployment', 'Priority / weight', 'Status', 'Quota used', 'Sessions / in flight', 'Response headers', 'Error rate', '']} empty={!data.deployments.length}>{data.deployments.map(d => <tr key={d.id}>
           <td>{d.name}<br /><span className="cu-muted">{kinds[d.kind]} · {d.account}{d.credentialFile ? ' · own credentials' : ''}</span></td>
           <td>{d.priority} / {d.weight}{d.maxConcurrency ? <><br /><span className="cu-muted">cap {d.maxConcurrency}</span></> : null}{d.contextWindowTokens ? <><br /><span className="cu-muted">≤{count(d.contextWindowTokens)} tokens</span></> : null}</td>
           <td>{healthLabel(d) === 'Serving' ? <span className="cu-badge">Serving</span> : healthLabel(d)}{d.lastError && <><br /><span className="cu-muted">last error: {d.lastError}</span></>}</td>
@@ -90,7 +90,7 @@ export default function Routing() {
       }}>
         <Select label="Automatic routing" value={values.fallbackEnabled} onChange={v => change('fallbackEnabled', v)} items={onOff} />
         <Select label="Strategy" value={values.strategy} onChange={v => change('strategy', v)} items={strategies} />
-        <Select label="Members may choose OpenAI models (/model gpt-…)" value={values.gptModelsEnabled} onChange={v => change('gptModelsEnabled', v)} items={onOff} />
+        <Select label="Members may choose GPT models on Codex (/model gpt-…)" value={values.gptModelsEnabled} onChange={v => change('gptModelsEnabled', v)} items={onOff} />
         <Select label="Claude Opus is served by" value={values.mapOpus} onChange={v => change('mapOpus', v)} items={models(values.mapOpus)} />
         <Select label="Claude Sonnet (and others) by" value={values.mapSonnet} onChange={v => change('mapSonnet', v)} items={models(values.mapSonnet)} />
         <Select label="Claude Haiku is served by" value={values.mapHaiku} onChange={v => change('mapHaiku', v)} items={models(values.mapHaiku)} />
@@ -98,7 +98,7 @@ export default function Routing() {
         <label>Retries on transient errors<input required type="number" min="0" max="3" value={values.transientRetries} onChange={e => change('transientRetries', e.target.value)} /></label>
         <label>Failures within a minute before cooldown<input required type="number" min="1" max="20" value={values.allowedFails} onChange={e => change('allowedFails', e.target.value)} /></label>
         <label>Cooldown (seconds)<input required type="number" min="5" max="3600" value={values.cooldownSeconds} onChange={e => change('cooldownSeconds', e.target.value)} /></label>
-        <label>First-byte timeout for streams (seconds)<input required type="number" min="10" max="600" value={values.firstByteTimeoutSeconds} onChange={e => change('firstByteTimeoutSeconds', e.target.value)} /></label>
+        <label>Response header timeout for streams (seconds)<input required type="number" min="10" max="600" value={values.firstByteTimeoutSeconds} onChange={e => change('firstByteTimeoutSeconds', e.target.value)} /></label>
         <div className="cu-bar"><button className="cu-primary" disabled={save.busy || !form}>{save.busy ? 'Saving…' : 'Save routing'}</button>{form && <button type="button" onClick={() => setForm(null)}>Discard changes</button>}</div>
       </form>
         <p className="cu-muted">Transient errors (overloaded, 5xx, timeouts, connection failures) are retried with backoff, then the next deployment is tried. Quota refusals take a deployment out until its reset. Context-too-long errors move to another deployment. A request is only retried elsewhere before anything was sent to the member. Changed by {text(data.updatedBy)} · {date(data.updatedAt)}.</p></Panel>
