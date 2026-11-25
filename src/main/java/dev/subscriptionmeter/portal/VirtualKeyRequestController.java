@@ -26,8 +26,9 @@ public class VirtualKeyRequestController {
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
     private final VirtualKeyRequests requests;
+    private final DirectVirtualKeys keys;
 
-    public VirtualKeyRequestController(VirtualKeyRequests requests) { this.requests = requests; }
+    public VirtualKeyRequestController(VirtualKeyRequests requests, DirectVirtualKeys keys) { this.requests = requests; this.keys = keys; }
 
     @GetMapping(MEMBER)
     public VirtualKeyRequests.Status status(HttpServletRequest request) {
@@ -59,6 +60,39 @@ public class VirtualKeyRequestController {
         return requests.decide(accountId, id, approve.asBoolean(), request);
     }
 
+    @GetMapping(MEMBER + "/key")
+    public Map<String, String> key(HttpServletRequest request) {
+        return Map.of("key", keys.reveal(actor(request)));
+    }
+
+    @PostMapping(path = ADMIN + "/{id}/provision", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Map<String, String> provision(@PathVariable String id, HttpServletRequest request) throws IOException {
+        String admin = actor(request);
+        var body = object(request);
+        var budget = body.path("weeklyBudgetUsd");
+        var rpm = body.path("rpm");
+        var models = body.path("allowedModels");
+        if (body.size()!=3 || !budget.isNumber() || !rpm.isIntegralNumber() || !rpm.canConvertToInt()
+                || rpm.asInt()<1 || rpm.asInt()>120 || !models.isArray() || models.isEmpty() || models.size()>20) throw invalid();
+        var cap = budget.decimalValue();
+        if (cap.scale()>2 || cap.compareTo(new java.math.BigDecimal("0.01"))<0 || cap.compareTo(new java.math.BigDecimal("100"))>0) throw invalid();
+        var allow = new java.util.LinkedHashSet<String>();
+        for (var model : models) {
+            if (!model.isString() || !model.asString().matches("[A-Za-z0-9._:-]{1,100}")) throw invalid();
+            allow.add(model.asString());
+        }
+        keys.provision(id, admin, cap, rpm.asInt(), List.copyOf(allow), request);
+        return Map.of("state", "active");
+    }
+
+    @PostMapping(path = ADMIN + "/{id}/revoke", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Map<String, String> revoke(@PathVariable String id, HttpServletRequest request) throws IOException {
+        actor(request);
+        if (!object(request).isEmpty()) throw invalid();
+        keys.revoke(id, request);
+        return Map.of("state", "revoked");
+    }
+
     private static String actor(HttpServletRequest request) {
         // Only the filters set this trusted attribute, after session (and for writes, CSRF) verification.
         if (request.getAttribute(PortalAuthFilter.ACCOUNT) instanceof String accountId) return accountId;
@@ -66,13 +100,19 @@ public class VirtualKeyRequestController {
     }
 
     private static JsonNode field(HttpServletRequest request, String name) throws IOException {
+        JsonNode body = object(request);
+        if (body.size() != 1 || !body.has(name)) throw invalid();
+        return body.get(name);
+    }
+
+    private static JsonNode object(HttpServletRequest request) throws IOException {
         if (request.getContentLengthLong() > MAX_BODY_BYTES) throw tooLarge();
         byte[] bytes = request.getInputStream().readNBytes(MAX_BODY_BYTES + 1);
         if (bytes.length > MAX_BODY_BYTES) throw tooLarge();
         try {
             JsonNode body = JSON.readTree(bytes);
-            if (body == null || !body.isObject() || body.size() != 1 || !body.has(name)) throw invalid();
-            return body.get(name);
+            if (body == null || !body.isObject()) throw invalid();
+            return body;
         } catch (JacksonException ex) {
             throw invalid();
         }

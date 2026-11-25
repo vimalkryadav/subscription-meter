@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-/** Separate from gateway membership and broker credentials. No approval path issues a key. */
+/** Review queue and owner-scoped status for direct broker access. */
 @Service
 public class VirtualKeyRequests {
     private static final int REVIEW_LIMIT = 50;
@@ -49,11 +49,11 @@ public class VirtualKeyRequests {
         if (current.isEmpty()) {
             jdbc.update("INSERT INTO virtual_key_requests (id, account_id, state, reason) VALUES (?, ?, 'pending', ?)",
                     id, accountId, reason);
-        } else if (current.get().state().equals("rejected")) {
+        } else if (java.util.Set.of("rejected", "revoked").contains(current.get().state())) {
             // Replace rather than append. A stale admin tab must not be able to review this new submission.
             jdbc.update("""
                     UPDATE virtual_key_requests SET id=?, state='pending', reason=?,
-                      requested_at=CURRENT_TIMESTAMP, decided_at=NULL WHERE account_id=? AND state='rejected'
+                      requested_at=CURRENT_TIMESTAMP, decided_at=NULL, broker_key_id=NULL WHERE account_id=?
                     """, id, reason, accountId);
         } else {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "A request is already pending or awaiting provisioning");
@@ -65,14 +65,15 @@ public class VirtualKeyRequests {
         requireRole(adminId, "admin");
         String order = switch (state) {
             case "pending" -> "r.requested_at, r.id";
-            case "approved_awaiting_provisioning", "rejected" -> "r.decided_at DESC, r.id DESC";
+            case "approved_awaiting_provisioning", "rejected", "active", "revoked" -> "r.decided_at DESC, r.id DESC";
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid request state");
         };
         return jdbc.query("""
-                SELECT r.id, r.state, r.reason, r.requested_at, r.decided_at, a.username, a.display_name
+                SELECT r.id, %s AS state, r.reason, r.requested_at, r.decided_at, a.username, a.display_name
                 FROM virtual_key_requests r JOIN portal_accounts a ON a.id=r.account_id
-                WHERE r.state=? ORDER BY %s LIMIT ?
-                """.formatted(order), (rs, row) -> new Review(rs.getString("username"), rs.getString("display_name"),
+                LEFT JOIN broker_keys b ON b.id=r.broker_key_id
+                WHERE %s=? ORDER BY %s LIMIT ?
+                """.formatted(EFFECTIVE, EFFECTIVE, order), (rs, row) -> new Review(rs.getString("username"), rs.getString("display_name"),
                 REQUEST_ROW.mapRow(rs, row)), state, REVIEW_LIMIT);
     }
 
@@ -94,8 +95,10 @@ public class VirtualKeyRequests {
         return byAccount(accountId).map(request -> new Status(request.state(), request)).orElseGet(() -> new Status("none", null));
     }
 
+    private static final String EFFECTIVE = "CASE WHEN r.broker_key_id IS NULL THEN r.state WHEN b.active AND (b.expires_at IS NULL OR b.expires_at>CURRENT_TIMESTAMP) THEN 'active' ELSE 'revoked' END";
+
     private Optional<Request> byAccount(String accountId) {
-        return jdbc.query("SELECT * FROM virtual_key_requests WHERE account_id=?", REQUEST_ROW, accountId).stream().findFirst();
+        return jdbc.query("SELECT r.id,"+EFFECTIVE+" AS state,r.reason,r.requested_at,r.decided_at FROM virtual_key_requests r LEFT JOIN broker_keys b ON b.id=r.broker_key_id WHERE r.account_id=?", REQUEST_ROW, accountId).stream().findFirst();
     }
 
     private void requireRole(String accountId, String role) {
