@@ -224,3 +224,7 @@ CREATE INDEX IF NOT EXISTS virtual_key_requests_decisions ON virtual_key_request
 -- A direct key is usable only through its owning, approved request.
 ALTER TABLE virtual_key_requests ADD COLUMN IF NOT EXISTS broker_key_id VARCHAR(36) REFERENCES broker_keys(id);
 CREATE UNIQUE INDEX IF NOT EXISTS virtual_key_requests_broker_key ON virtual_key_requests(broker_key_id);
+
+ALTER TABLE broker_calls ADD COLUMN IF NOT EXISTS operation VARCHAR(20);
+ALTER TABLE broker_calls ADD COLUMN IF NOT EXISTS item_count INTEGER;
+ALTER TABLE broker_calls ADD COLUMN IF NOT EXISTS total_tokens BIGINT;

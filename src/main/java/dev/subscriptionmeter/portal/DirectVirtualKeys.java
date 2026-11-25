@@ -81,6 +81,21 @@ public class DirectVirtualKeys {
             .flatMap(store::reveal).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No usable direct API key"));
     }
 
+    public record EmbeddingUsage(String model, long requests, long items, long promptTokens, long totalTokens) {}
+
+    public List<EmbeddingUsage> embeddingUsage(String account) {
+        return jdbc.query("""
+            SELECT c.model, COUNT(*) AS requests, SUM(c.item_count) AS items,
+                   SUM(c.input_tokens) AS prompt_tokens, SUM(c.total_tokens) AS total_tokens
+            FROM broker_calls c
+            WHERE c.key_id IN (""" + ELIGIBLE + " AND r.account_id=?)" + """
+              AND c.operation='embeddings' AND c.state='settled' AND c.created_at>=?
+            GROUP BY c.model ORDER BY c.model
+            """, (rs, row) -> new EmbeddingUsage(rs.getString("model"), rs.getLong("requests"), rs.getLong("items"),
+                rs.getLong("prompt_tokens"), rs.getLong("total_tokens")), account,
+                java.sql.Timestamp.from(Instant.now().minus(java.time.Duration.ofDays(30))));
+    }
+
     public boolean authorized(String token) {
         return store.authenticate(token, Instant.now()).filter(key -> key.purpose().equals(PURPOSE))
             .map(key -> !jdbc.queryForList(ELIGIBLE + " AND b.id=?", String.class, key.id()).isEmpty()).orElse(false);

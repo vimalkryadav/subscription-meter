@@ -201,6 +201,29 @@ class VirtualKeyRequestFlowTest {
                 exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body);
             }
         });
+        upstream.createContext("/v1/embeddings", exchange -> {
+            try (exchange) {
+                var input = JSON.readTree(exchange.getRequestBody().readAllBytes());
+                int count = input.path("input").isArray() ? input.path("input").size() : 1;
+                var result = JSON.createObjectNode();
+                result.put("object", "list");
+                result.put("model", input.path("model").asString());
+                var data = result.putArray("data");
+                for (int index = 0; index < count; index++) {
+                    var item = data.addObject();
+                    item.put("object", "embedding"); item.put("index", index);
+                    item.putArray("embedding").add(index).add(input.path("dimensions").asInt());
+                }
+                result.putObject("usage").put("prompt_tokens", 6).put("total_tokens", 6);
+                byte[] bytes = JSON.writeValueAsBytes(result);
+                int status = "Bearer test-key".equals(exchange.getRequestHeaders().getFirst("Authorization")) ? 200 : 401;
+                if (input.path("user").asString("").equals("rate-test")) {
+                    status = 429; exchange.getResponseHeaders().set("Retry-After", "7");
+                }
+                exchange.sendResponseHeaders(status, bytes.length);
+                exchange.getResponseBody().write(bytes);
+            }
+        });
         upstream.start();
         var store = new dev.subscriptionmeter.broker.BrokerStore(jdbc, () -> java.util.Optional.of(BOOTSTRAP));
         var broker = new dev.subscriptionmeter.broker.BrokerServer(store, () -> java.util.Optional.of("test-key"),
@@ -224,6 +247,31 @@ class VirtualKeyRequestFlowTest {
                 var refused = direct.perform(post(responses).header("Authorization", "Bearer " + key).contentType("application/json")
                         .content("{\"model\":\"gpt-6-luna\",\"input\":\"sanitization-check\"}")).andExpect(status().isBadRequest()).andReturn();
                 assertThat(refused.getResponse().getContentAsString()).contains("request_rejected").doesNotContain("synthetic-private-upstream-detail");
+                String embedding = "/api/v1/embeddings";
+                String batch = "{\"model\":\"text-embedding-3-small\",\"input\":[\"first\",\"second\"],\"dimensions\":1536}";
+                direct.perform(post(embedding).contentType("application/json").content(batch)).andExpect(status().isUnauthorized());
+                var response = direct.perform(post(embedding).header("Authorization", "Bearer " + key)
+                    .contentType("application/json").content(batch)).andExpect(status().isOk()).andReturn();
+                var vectors = JSON.readTree(response.getResponse().getContentAsString()).path("data");
+                assertThat(vectors.size()).isEqualTo(2);
+                assertThat(vectors.get(1).path("index").asInt()).isEqualTo(1);
+                assertThat(vectors.get(0).path("embedding").get(1).asInt()).isEqualTo(1536);
+                String usagePath = MEMBER + "/embedding-usage";
+                var usage = read(usagePath, member).get(0);
+                assertThat(usage.path("items").asInt()).isEqualTo(2);
+                assertThat(usage.path("promptTokens").asInt()).isEqualTo(6);
+                assertThat(usage.path("totalTokens").asInt()).isEqualTo(6);
+                assertThat(read(usagePath, other).isEmpty()).isTrue();
+                direct.perform(post(embedding).header("Authorization", "Bearer " + key).contentType("application/json")
+                    .content(batch.replace("text-embedding-3-small", "text-embedding-3-large"))).andExpect(status().isBadRequest());
+                direct.perform(post(embedding).header("Authorization", "Bearer " + key).contentType("application/json")
+                    .content("{\"model\":\"text-embedding-3-small\",\"input\":\"one\",\"user\":\"rate-test\"}"))
+                    .andExpect(status().isTooManyRequests()).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Retry-After", "7"));
+                // Two Responses attempts and two embeddings attempts consume the same RPM counter.
+                jdbc.update("UPDATE broker_keys SET rpm=4 WHERE member_id=?", memberId);
+                var limited = direct.perform(post(embedding).header("Authorization", "Bearer " + key)
+                    .contentType("application/json").content(batch)).andExpect(status().isTooManyRequests()).andReturn();
+                assertThat(limited.getResponse().getHeader("Retry-After")).isNull();
             } finally { controller.close(); }
         } finally { broker.stop(0); upstream.stop(0); }
         jdbc.update("UPDATE broker_keys SET purpose='member_fallback' WHERE member_id=?", memberId);

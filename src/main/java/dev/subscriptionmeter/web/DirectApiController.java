@@ -18,7 +18,7 @@ import tools.jackson.core.json.JsonFactory;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Relays only the two supported inference routes, and only for provisioned direct keys. */
+/** Relays only supported direct API routes, and only for provisioned direct keys. */
 @RestController
 @RequestMapping("/api/v1")
 public class DirectApiController {
@@ -50,6 +50,51 @@ public class DirectApiController {
     @PostMapping(path = "/responses", consumes = MediaType.APPLICATION_JSON_VALUE)
     public void responses(HttpServletRequest request, HttpServletResponse response) throws IOException {
         relay(request, response, true);
+    }
+
+    private final Semaphore embeddingSlots = new Semaphore(4);
+
+    @PostMapping(path = "/embeddings", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public void embeddings(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.setHeader("Cache-Control", "no-store");
+        String auth = request.getHeader("Authorization");
+        if (auth == null || !auth.matches("(?i:Bearer) cuvk_[A-Za-z0-9_-]{43}") || !keys.authorized(auth.substring(7))) {
+            error(response, 401, "invalid_api_key", "Direct API key is invalid or inactive"); return;
+        }
+        if (request.getQueryString() != null) { error(response, 400, "invalid_request", "Query parameters are not supported"); return; }
+        if (!embeddingSlots.tryAcquire()) { response.setHeader("Retry-After", "1"); error(response, 429, "overloaded", "Embeddings capacity is busy"); return; }
+        try (var tracking = deployment.enter()) {
+            int limit = 8 * 1024 * 1024;
+            if (request.getContentLengthLong() > limit) { error(response, 413, "request_too_large", "Request exceeds 8 MiB"); return; }
+            byte[] body = request.getInputStream().readNBytes(limit + 1);
+            if (body.length > limit) { error(response, 413, "request_too_large", "Request exceeds 8 MiB"); return; }
+            var upstream = http.send(HttpRequest.newBuilder(URI.create(broker + "/v1/embeddings"))
+                    .timeout(Duration.ofSeconds(65)).header("Authorization", auth).header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofInputStream());
+            try (var stream = upstream.body()) {
+                var timeout = deadlines.schedule(() -> { try { stream.close(); } catch (IOException ignored) { } }, 65, TimeUnit.SECONDS);
+                try {
+                    int status = upstream.statusCode();
+                    if (status == 429) upstream.headers().firstValue("Retry-After").filter(v -> v.matches("[0-9]{1,9}")).ifPresent(v -> response.setHeader("Retry-After", v));
+                    if (status != 200) {
+                        int mapped = java.util.Set.of(400,401,413,422,429,504).contains(status) ? status : 502;
+                        error(response, mapped, switch (mapped) { case 400,422 -> "invalid_request"; case 401 -> "invalid_api_key"; case 413 -> "request_too_large"; case 429 -> "limit_reached"; default -> "upstream_error"; }, "Embeddings request did not succeed");
+                        return;
+                    }
+                    response.setStatus(200);
+                    response.setContentType("application/json");
+                    stream.transferTo(response.getOutputStream());
+                } finally { timeout.cancel(false); }
+            }
+        } catch (HttpTimeoutException e) {
+            if (!response.isCommitted()) error(response, 504, "upstream_timeout", "Embeddings request timed out");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (!response.isCommitted()) error(response, 502, "upstream_error", "Embeddings request interrupted");
+        } catch (IOException e) {
+            if (response.isCommitted()) throw e;
+            error(response, 502, "upstream_error", "Embeddings response unavailable");
+        } finally { embeddingSlots.release(); }
     }
 
     private static boolean validBody(byte[] body) {

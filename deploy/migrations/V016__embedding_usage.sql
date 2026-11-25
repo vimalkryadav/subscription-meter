@@ -1,0 +1,3 @@
+ALTER TABLE broker_calls ADD COLUMN IF NOT EXISTS operation VARCHAR(20);
+ALTER TABLE broker_calls ADD COLUMN IF NOT EXISTS item_count INTEGER;
+ALTER TABLE broker_calls ADD COLUMN IF NOT EXISTS total_tokens BIGINT;
