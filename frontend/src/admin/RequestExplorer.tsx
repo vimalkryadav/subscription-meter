@@ -155,7 +155,9 @@ function RequestValue({ id }: { id: string }) {
 function RequestSummary({ data }: { data: Row }) {
   const fields = [
     ['Member', text(data.name)], ['Started', date(data.started_at)],
-    ['Model', text(data.model)], ['Outcome', text(data.status_code) + ' · ' + text(data.state)],
+    ['Requested model', text(data.model)], ['Routed model', text(data.served_model)],
+    ['Provider / account', [data.provider, data.upstream_account].filter(Boolean).join(' / ') || '—'],
+    ['Outcome', text(data.status_code) + ' · ' + text(data.state)],
     ['Duration', duration(data.duration_ms)], ['First response byte', duration(data.first_byte_ms)],
     ['Input tokens', count(data.input_tokens)], ['Output tokens', count(data.output_tokens)],
     ['Cache write tokens', count(data.cache_creation_input_tokens)], ['Cache read tokens', count(data.cache_read_input_tokens)],

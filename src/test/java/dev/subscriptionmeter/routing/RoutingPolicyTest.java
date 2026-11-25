@@ -16,7 +16,7 @@ class RoutingPolicyTest {
     static List<String> ids(List<Deployment> list) { return list.stream().map(Deployment::id).toList(); }
 
     @Test void priorityAlwaysWinsAndDisabledOrBlockedAreDropped() {
-        var deployments = List.of(dep("key", "broker", 2, 1000), dep("claude", "anthropic", 1, 100), dep("codex", "codex", 1, 100),
+        var deployments = List.of(dep("key", "broker", 1, 1000), dep("claude", "anthropic", 9, 100), dep("codex", "codex", 1, 100),
                 new Deployment("off", "off", "codex", "off", 1, 100, false, null, null, null));
         var blocked = new DeploymentHealth.View(0, null, 0, Instant.EPOCH, NOW.plusSeconds(60), "quota");
         var order = RoutingPolicy.order(deployments, new RoutingPolicy.Request(false, 10, null), "balanced",

@@ -50,10 +50,17 @@ public class DeploymentHealth {
         if (registry != null) Counter.builder("meter.routing.attempts").tag("deployment", id).tag("outcome", outcome).register(registry).increment();
     }
 
-    /** Marks a request in flight; the returned handle must be closed when the reply ends. */
-    public AutoCloseable acquire(String id) {
+    /** Marks an uncapped request in flight. */
+    public AutoCloseable acquire(String id) { return tryAcquire(id, null); }
+
+    /** Atomically reserves an in-flight slot, or returns null when the instance-local cap is full. */
+    AutoCloseable tryAcquire(String id, Integer cap) {
         var s = of(id);
-        s.inFlight.incrementAndGet();
+        for (;;) {
+            int active = s.inFlight.get();
+            if (cap != null && active >= cap) return null;
+            if (s.inFlight.compareAndSet(active, active + 1)) break;
+        }
         var released = new java.util.concurrent.atomic.AtomicBoolean();
         return () -> { if (released.compareAndSet(false, true)) s.inFlight.decrementAndGet(); };
     }
