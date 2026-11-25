@@ -2,6 +2,9 @@ import ConnectionSetup from '../shared/ConnectionSetup';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, getSession, setCsrf, type Session } from '../shared/api';
 import './portal.css';
+import VirtualKeyRequest from './VirtualKeyRequest';
+import UsageWorkspace from '../shared/UsageWorkspace';
+import './portal-redesign.css';
 
 type AccessState = 'none' | 'pending' | 'approved' | 'active' | 'rejected' | 'revoked';
 interface Usage { model: string; state: string; requests: number; input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number }
@@ -26,6 +29,7 @@ export default function PortalApp() {
   const [notice, setNotice] = useState('');
   const [token, setToken] = useState('');
   const [rotate, setRotate] = useState(false);
+  const [view, setView] = useState<'overview' | 'access' | 'leaderboard' | 'virtual-key'>('overview');
   const busyRef = useRef(false);
   const generation = useRef(0);
   const confirmButton = useRef<HTMLButtonElement>(null);
@@ -39,6 +43,7 @@ export default function PortalApp() {
   const totals = usage.reduce((sum, row) => ({ requests: sum.requests + row.requests, input: sum.input + row.input_tokens, output: sum.output + row.output_tokens }), { requests: 0, input: 0, output: 0 });
   function signedOut() {
     generation.current++;
+    setView('overview');
     setCsrf(''); setSessionFailed(false); setSession(null); setAccess(null); setToken(''); setRotate(false); setNotice('');
   }
   async function refresh(expected = generation.current) {
@@ -121,7 +126,7 @@ export default function PortalApp() {
       {error && !rotate && <div className="error" role="alert">{error}</div>}
       <div role="status" aria-live="polite">{notice && <p className="notice">{notice}</p>}</div>
       {waiting ? <div className="portal-loading" role="status">Loading…</div> : sessionFailed && !session ? <section className="card account-retry"><h1>Couldn’t load your account</h1><p>Check your connection and try again.</p><button disabled={busy} onClick={retrySession}>Try again</button></section> : !session ? <section className="welcome">
-        <div className="intro"><div className="eyebrow">Claude Code for your team</div><h1>Your work.<br />Your access.</h1><p>Connect your terminal with a personal token and see your usage in one place.</p><p className="muted">New here? Create an account, request access, and connect after your administrator approves it.</p></div>
+        <div className="intro"><div className="eyebrow">Claude Code for your team</div><h1>One workspace.<br />Three routes.</h1><p>Connect your terminal with a personal token and see your usage in one place.</p><p className="muted">New here? Create an account, request access, and connect after your administrator approves it.</p></div>
         <section className="card auth-card" aria-labelledby="auth-title"><div className="tabs" role="group" aria-label="Account access">{[false, true].map(create => <button type="button" key={String(create)} disabled={busy} aria-pressed={create === registering} onClick={() => { setRegistering(create); setError(''); }}>{create ? 'Create account' : 'Sign in'}</button>)}</div><h2 id="auth-title">{registering ? 'Create your account' : 'Welcome back'}</h2><p className="muted">{registering ? 'Gateway access is approved separately.' : 'Sign in to manage your token and usage.'}</p>
           <form key={String(registering)} onSubmit={submitAuth} aria-busy={busy}><fieldset disabled={busy}>
             {registering && <><label htmlFor="displayName">Your name</label><input id="displayName" name="displayName" maxLength={55} autoComplete="name" required /></>}
@@ -132,8 +137,12 @@ export default function PortalApp() {
           </fieldset></form>
         </section>
       </section> : <section id="portal">
-        <div className="page-heading"><div><div className="eyebrow">Your workspace</div><h1>{session.user.displayName}</h1><p className="muted">@{session.user.username}</p></div><button disabled={busy} className="secondary" onClick={() => action(() => refresh())}>{busy ? 'Loading…' : 'Refresh'}</button></div>
-        {!access ? <section className="card"><h2>Unable to load your access</h2><p>Use Refresh to try again.</p></section> : <>
+        <div className="page-heading"><div><div className="eyebrow">Member workspace</div><h1>{session.user.displayName}</h1><p className="muted">@{session.user.username}</p></div><button disabled={busy} className="secondary" onClick={() => action(() => refresh())}>{busy ? 'Loading…' : 'Refresh'}</button></div>
+        <nav className="member-nav" aria-label="Workspace sections">{([['overview', 'Overview'], ['access', 'Access & keys'], ['leaderboard', 'Leaderboard'], ['virtual-key', 'Virtual key']] as const).map(([id, label]) => <button type="button" key={id} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</nav>
+        {access?.state === 'active' && (view === 'overview' || view === 'leaderboard') && <div className="member-overview"><UsageWorkspace key={view} view={view === 'leaderboard' ? 'leaderboard' : 'usage'} /></div>}
+        {access?.state !== 'active' && view === 'leaderboard' && <section className="card member-overview"><h2>Usage leaderboard</h2><p>Activate your workspace access to see anonymized team activity.</p><button onClick={() => setView('access')}>Go to access</button></section>}
+        {view === 'virtual-key' && <div className="member-overview"><VirtualKeyRequest /></div>}
+        {(view === 'access' || (view === 'overview' && access?.state !== 'active')) && (!access ? <section className="card"><h2>Unable to load your access</h2><p>Use Refresh to try again.</p></section> : <>
           <section className="card access-card" aria-labelledby="access-title"><div className="row"><h2 id="access-title">{titles[access.state]}</h2><span className={`pill state-${access.state}`}>{access.state === 'none' ? 'Not requested' : access.state}</span></div><p>{descriptions[access.state]}</p>
             {limits && ['approved', 'active'].includes(access.state) && <p className="muted">{limits.rpm} requests/minute · {limits.concurrency} concurrent requests</p>}
             {['none', 'rejected', 'revoked'].includes(access.state) && <form className="access-request" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const reason = new FormData(form).get('reason'); void action(async () => { await api('/portal/api/key-requests', { method: 'POST', body: JSON.stringify({ reason }) }); form.reset(); await refresh(); }); }}><label htmlFor="reason">What will you use this access for?</label><textarea id="reason" name="reason" maxLength={500} required disabled={busy} placeholder="Describe your project or team." /><button disabled={busy}>{busy ? 'Loading…' : 'Request access'}</button></form>}
@@ -143,8 +152,8 @@ export default function PortalApp() {
             <details className="capture-details"><summary>Requests and responses are recorded and sessions are summarized</summary><p>Forwarded requests, responses, and tool events are recorded for administrator review, subject to capture limits and retention. Recognized credentials are redacted; project code and other content may be retained.</p><p>After a Claude Code session goes idle, your prompts and the names of tools and files used are sent to OpenAI’s API to produce a short summary and category for your administrator. Tool outputs and file contents are not included.</p></details>
           </section>
           {access.state === 'active' && <section className="card setup-card"><h2>Connect Claude Code</h2><ConnectionSetup gateway={gateway} /></section>}
-          {(access.state === 'active' || usage.length > 0) && <section className="card usage-card" aria-labelledby="usage-title"><div className="row"><h2 id="usage-title">Your usage</h2><span className="muted">Last 30 days</span></div>{usage.length > 0 ? <><dl className="usage-summary"><div><dt>Requests</dt><dd>{totals.requests.toLocaleString()}</dd></div><div><dt>Input tokens</dt><dd>{totals.input.toLocaleString()}</dd></div><div><dt>Output tokens</dt><dd>{totals.output.toLocaleString()}</dd></div></dl><details><summary>Usage by model and result</summary><div className="scroll" tabIndex={0} role="region" aria-label="Usage by model"><table><thead><tr>{['Model', 'Result', 'Requests', 'Input', 'Output', 'Cache write', 'Cache read'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{usage.map((row, index) => <tr key={`${row.model}-${row.state}-${index}`}>{[row.model, row.state, row.requests, row.input_tokens, row.output_tokens, row.cache_creation_input_tokens, row.cache_read_input_tokens].map((value, i) => <td key={i}>{typeof value === 'number' ? value.toLocaleString() : value}</td>)}</tr>)}</tbody></table></div></details><p className="muted">Observed tokens, not your remaining subscription allowance or a bill. Cache tokens are listed in the breakdown.</p></> : <p>Your usage will appear after your first gateway request.</p>}</section>}
-        </>}
+          {view === 'access' && usage.length > 0 && <section className="card usage-card" aria-labelledby="usage-title"><div className="row"><h2 id="usage-title">Your usage</h2><span className="muted">Last 30 days</span></div>{usage.length > 0 ? <><dl className="usage-summary"><div><dt>Requests</dt><dd>{totals.requests.toLocaleString()}</dd></div><div><dt>Input tokens</dt><dd>{totals.input.toLocaleString()}</dd></div><div><dt>Output tokens</dt><dd>{totals.output.toLocaleString()}</dd></div></dl><details><summary>Usage by model and result</summary><div className="scroll" tabIndex={0} role="region" aria-label="Usage by model"><table><thead><tr>{['Model', 'Result', 'Requests', 'Input', 'Output', 'Cache write', 'Cache read'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{usage.map((row, index) => <tr key={`${row.model}-${row.state}-${index}`}>{[row.model, row.state, row.requests, row.input_tokens, row.output_tokens, row.cache_creation_input_tokens, row.cache_read_input_tokens].map((value, i) => <td key={i}>{typeof value === 'number' ? value.toLocaleString() : value}</td>)}</tr>)}</tbody></table></div></details><p className="muted">Observed tokens, not your remaining subscription allowance or a bill. Cache tokens are listed in the breakdown.</p></> : <p>Your usage will appear after your first gateway request.</p>}</section>}
+        </>)}
       </section>}
     </main><footer inert={rotate}>control-usage · Team access to Claude Code</footer>
     {rotate && <div className="dialog-backdrop"><section className="card" role="dialog" aria-modal="true" aria-labelledby="rotate-title" aria-describedby="rotate-description" onKeyDown={event => { if (event.key === 'Escape' && !busy) closeRotation(); if (event.key === 'Tab') { const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'); if (!buttons.length) { event.preventDefault(); return; } if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons[buttons.length - 1].focus(); } else if (!event.shiftKey && document.activeElement === buttons[buttons.length - 1]) { event.preventDefault(); buttons[0].focus(); } } }}><h2 id="rotate-title">Replace your token?</h2>{error && <div className="error" role="alert">{error}</div>}<p id="rotate-description">Your current token will stop working immediately. Run setup with the new token on every device that uses it, then restart existing Claude sessions.</p><div className="actions"><button ref={confirmButton} disabled={busy} className="secondary" onClick={closeRotation}>Cancel</button><button disabled={busy} onClick={() => issue(true)}>{busy ? 'Loading…' : 'Replace token'}</button></div></section></div>}

@@ -408,3 +408,9 @@ Health (in flight, rolling time to first byte and error rate, cooldowns, quota b
 
 Each account gets its own account label, so its quota observations, ledger attribution and health are tracked separately. Primary deployments can be disabled but not removed.
 
+
+### Workspace overview and leaderboard
+
+Members and administrators can switch between 7- and 30-day gateway usage and see Claude subscription, Codex subscription, and paid API fallback separately. Counts reflect recorded Claude Code requests, including unsuccessful requests; tokens are observed usage, not remaining quota or a bill. Background summaries are not included. The leaderboard uses anonymized aggregate rows, with **You** identifying the signed-in member. It shows activity, not productivity.
+
+Members can request direct OpenAI-compatible access from **Virtual key**. Administrators review these under **Virtual key requests**. Approval records **Awaiting provisioning** only; it does not issue a credential, grant paid access, or expose a public API endpoint.
