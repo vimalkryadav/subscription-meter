@@ -106,11 +106,22 @@ def render_config(template, color, sha):
     text = re.sub(r"reverse_proxy (?:app|app-blue|app-green):8180", "reverse_proxy app-"+color+":8180", template)
     text = re.sub(r"(handle / \{\s*root \* /srv\s*)(?:rewrite \* /releases/[0-9a-f]{40}/index.html\s*)?",
                   r"\1rewrite * /releases/"+sha+"/index.html\n        ", text)
-    # Extend the existing method-scoped allowlist, never the broker or its admin API.
-    for endpoint in ("responses", "models"):
-        existing = "/gateway/openai/v1/" + endpoint
+    # The running configuration can predate the optional Codex routes. Match the
+    # method and matcher name, and append only the member-facing direct path.
+    for name, method, endpoint, anchor in (
+        ("messages", "POST", "responses", "/gateway/v1/messages"),
+        ("models", "GET", "models", "/gateway/v1/models"),
+    ):
         direct = "/gateway/api/v1/" + endpoint
-        text = re.sub(r"(?m)^( +path [^\n]*" + re.escape(existing) + r")$", r"\1 " + direct, text)
+        pattern = rf"(?m)^( +@{name} \{{\n +method {method}\n +path )([^\n]+)(\n +\}})"
+        def add_route(match):
+            paths = match[2].split()
+            if anchor not in paths:
+                raise ValueError("Missing expected gateway path; review edge configuration")
+            return match[1] + match[2] + ("" if direct in paths else " " + direct) + match[3]
+        text, count = re.subn(pattern, add_route, text)
+        if count != 1:
+            raise ValueError("Missing or ambiguous gateway matcher; review edge configuration")
     if "reverse_proxy app-"+color+":8180" not in text or "/releases/"+sha+"/index.html" not in text:
         raise ValueError("Unrecognized Caddy template; review manually")
     return text
