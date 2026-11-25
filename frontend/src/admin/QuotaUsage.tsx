@@ -16,24 +16,26 @@ interface Window {
 interface Report { generatedAt: string; outsideUsage: string; windows: Window[] }
 const percent = (value: number | null) => value == null ? 'Unknown' : count(value) + '%';
 
-export default function QuotaUsage({ provider, revision }: { provider: string; revision: number }) {
+export default function QuotaUsage({ provider, revision, compact = false }: { provider: string; revision: number; compact?: boolean }) {
   const resource = useResource<Report>('/admin/quota-usage?' + new URLSearchParams({ provider, refresh: String(revision) }));
   const [search, setSearch] = useState('');
-  return <Panel title="Session & weekly limits">
+  return <Panel title={compact ? "Codex session & weekly limits" : "Session & weekly limits"}>
+    {compact ? <p className="cu-muted">Latest stored observations, not a live balance. If Codex hasn’t reported a five-hour session window, it shows Unknown.</p> : <>
     <p className="cu-muted">Provider-reported account usage and member activity in the corresponding reset windows. These windows are independent of the filters in Member usage.</p>
     <Notice>Outside usage is unknown. A member’s gateway share measures reported tokens, not their percentage of the provider’s allowance. Model weighting, missing usage and activity outside this gateway prevent exact attribution.</Notice>
     <p className="cu-muted">The all-models weekly limit and Fable weekly limit are independent observations. Do not add their percentages. The Fable breakdown includes only recognized Fable requests.</p>
     <div className="cu-toolbar"><label>Find a member in quota windows<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or member ID" /></label><span className="cu-muted">Filtering keeps the all-member denominator.</span></div>
+    </>}
     <Notice error>{resource.error}</Notice>
     <InvestigationRegion loading={resource.loading}>{resource.data && <>
       {!resource.data.windows.length && <Notice>No trusted quota observations available for this provider. Session and weekly usage are unknown.</Notice>}
-      <div className="cu-grid cu-quota-windows">{resource.data.windows.map(window => <QuotaWindow key={[window.provider, window.account, window.bucket].join('/')} window={window} search={search} />)}</div>
-      <p className="cu-muted">Gateway totals read at {date(resource.data.generatedAt)}. Refresh reads stored data; it does not contact providers. Recorded tokens include input, output, cache creation and cache reads. Partial records can change as audit processing catches up.</p>
+      <div className="cu-grid cu-quota-windows">{resource.data.windows.map(window => <QuotaWindow key={[window.provider, window.account, window.bucket].join('/')} window={window} search={search} compact={compact} />)}</div>
+      {!compact && <p className="cu-muted">Gateway totals read at {date(resource.data.generatedAt)}. Refresh reads stored data; it does not contact providers. Recorded tokens include input, output, cache creation and cache reads. Partial records can change as audit processing catches up.</p>}
     </>}</InvestigationRegion>
   </Panel>;
 }
 
-function QuotaWindow({ window: w, search }: { window: Window; search: string }) {
+function QuotaWindow({ window: w, search, compact }: { window: Window; search: string; compact: boolean }) {
   const label = w.provider === 'openai' && w.bucket === 'seven_day' ? 'Weekly' : quotaLabel(w.bucket);
   const query = search.trim().toLocaleLowerCase();
   const members = w.members.filter(member => (member.name + ' ' + member.memberId).toLocaleLowerCase().includes(query));
@@ -48,7 +50,7 @@ function QuotaWindow({ window: w, search }: { window: Window; search: string }) 
     <p className="cu-muted">{freshness}</p>
     <dl className="cu-coverage"><div><dt>Provider observation</dt><dd>{date(w.observedAt)}</dd></div><div><dt>Reported reset</dt><dd>{date(w.resetsAt)}</dd></div><div><dt>Source</dt><dd>{w.source === 'codex_headers_v1' ? 'Codex response headers' : w.source === 'upstream_headers_v1' ? 'Upstream response headers' : w.source === 'coder_statusline' ? 'Trusted Coder status line' : w.source || 'Unavailable'}</dd></div></dl>
     {w.freshness === 'unavailable' && <p className="cu-muted">This limit needs its own trusted provider observation. Its percentage, reset time and member window are not copied from another limit.</p>}
-    {w.startsAt && w.gatewayThrough && <>
+    {!compact && w.startsAt && w.gatewayThrough && <>
       <h4>Members in this window</h4>
       <p className="cu-muted">Requests started from {date(w.startsAt)} to {date(w.gatewayThrough)} (end exclusive). The start is derived from the reported reset minus {w.bucket === 'five_hour' ? 'five hours' : 'seven days'}. Gateway totals may include activity after the provider observation.</p>
       <p>{count(w.requests)} requests · {count(w.reportedTokens)} reported tokens</p>

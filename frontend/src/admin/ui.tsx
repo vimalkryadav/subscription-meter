@@ -1,3 +1,5 @@
+import { Children } from 'react';
+import { Pagination, usePagination } from '../shared/Pagination';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode, KeyboardEvent } from 'react';
 import { api } from '../shared/api';
@@ -62,8 +64,11 @@ export function Heading({ title, subtitle, children }: { title: string; subtitle
   return <div className="cu-heading"><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>{children}</div>;
 }
 export function Panel({ title, children }: { title: string; children: ReactNode }) { return <section className="cu-panel"><h2>{title}</h2>{children}</section>; }
-export function Table({ headings, children, empty, label }: { headings: string[]; children: ReactNode; empty?: boolean; label?: string }) {
-  return <><p className="cu-table-hint" hidden={headings.length < 5}>Scroll horizontally to see all columns.</p><div className="cu-table-scroll" tabIndex={0} role="region" aria-label={label || headings.join(', ')}><table className={headings.length >= 5 ? 'cu-wide-table' : undefined}><thead><tr>{headings.map((heading, i) => <th key={i} scope="col">{heading || 'Actions'}</th>)}</tr></thead><tbody>{empty ? <tr><td colSpan={headings.length} className="cu-empty">No matching records.</td></tr> : children}</tbody></table></div></>;
+export function Table({ headings, children, empty, label, paginate = true }: { headings: string[]; children: ReactNode; empty?: boolean; label?: string; paginate?: boolean }) {
+  const rows = Children.toArray(children);
+  const paging = usePagination(empty ? 0 : rows.length);
+  const tableLabel = label || headings.filter(Boolean).join(', ');
+  return <><p className="cu-table-hint" hidden={headings.length < 5}>Scroll horizontally to see all columns.</p><div className="cu-table-scroll" tabIndex={0} role="region" aria-label={tableLabel}><table className={headings.length >= 5 ? 'cu-wide-table' : undefined}><thead><tr>{headings.map((heading, i) => <th key={i} scope="col">{heading || 'Actions'}</th>)}</tr></thead><tbody>{empty ? <tr><td colSpan={headings.length} className="cu-empty">No matching records.</td></tr> : paginate ? rows.slice(paging.start, paging.end) : children}</tbody></table></div>{paginate && <Pagination total={empty ? 0 : rows.length} paging={paging} label={tableLabel} />}</>;
 }
 export function Stat({ title, value, note }: { title: string; value: ReactNode; note?: ReactNode }) { return <article className="cu-stat"><h2>{title}</h2><strong>{value}</strong>{note && <p>{note}</p>}</article>; }
 export function Segments<T extends string | number>({ label, values, value, onChange }: { label: string; values: { value: T; label: string }[]; value: T; onChange: (value: T) => void }) {
