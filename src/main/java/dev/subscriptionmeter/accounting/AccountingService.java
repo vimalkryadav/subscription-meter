@@ -64,7 +64,8 @@ public class AccountingService {
             var old=jdbc.queryForList("SELECT * FROM request_assessments WHERE request_id=?",id);
             // Select a complete bounded document, never a syntactically broken prefix.
             // Oversized captures remain available to the explorer but classify as unknown.
-            var bodies=jdbc.queryForList("SELECT CASE WHEN LENGTH(request_body)<=? THEN request_body ELSE NULL END AS body,response_headers,started_at,upstream_headers_ms,capture_state,event_count FROM request_details WHERE request_id=? ORDER BY started_at DESC LIMIT 1",WorkClassifier.MAX_BODY_CHARS,id);
+            var bodies=jdbc.queryForList("SELECT CASE WHEN COALESCE(body_chars,LENGTH(request_body))<=? THEN request_body ELSE NULL END AS request_body,CASE WHEN COALESCE(body_chars,LENGTH(request_body))<=? THEN body_manifest ELSE NULL END AS body_manifest,body_format,member_id,response_headers,started_at,upstream_headers_ms,capture_state,event_count FROM request_details WHERE request_id=? ORDER BY started_at DESC LIMIT 1",WorkClassifier.MAX_BODY_CHARS,WorkClassifier.MAX_BODY_CHARS,id);
+            if(!bodies.isEmpty()){var row=bodies.getFirst();new dev.subscriptionmeter.audit.CaptureBlobStore(jdbc).resolve(row,"member_id");row.put("body",row.remove("request_body"));row.remove("member_id");}
             Map<String,Object> capture=bodies.isEmpty()?Map.of():bodies.getFirst();
             if(bodies.isEmpty()&&!old.isEmpty()&&Objects.equals(old.getFirst().get("source_usage"),r.get("usage_components"))
                     &&Objects.equals(old.getFirst().get("source_complete"),r.get("usage_complete")))return;

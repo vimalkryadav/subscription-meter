@@ -30,9 +30,15 @@ CREATE TABLE IF NOT EXISTS request_details (
   response_headers TEXT, response_body TEXT, capture_state VARCHAR(32) NOT NULL DEFAULT 'pending',
   request_bytes BIGINT, response_bytes BIGINT, captured_bytes BIGINT, event_count INTEGER NOT NULL DEFAULT 0,
   truncated BOOLEAN NOT NULL DEFAULT FALSE, upstream_headers_ms BIGINT, first_byte_ms BIGINT,
-  error_type VARCHAR(200), error_message TEXT, PRIMARY KEY (request_id, started_at)
+  error_type VARCHAR(200), error_message TEXT, body_manifest TEXT, body_chars INTEGER,
+  body_format SMALLINT NOT NULL DEFAULT 1, body_check SMALLINT, PRIMARY KEY (request_id, started_at)
 );
 CREATE INDEX IF NOT EXISTS details_member_time ON request_details(member_id,started_at);
+CREATE INDEX IF NOT EXISTS request_details_inline_bodies ON request_details(body_check,started_at);
+CREATE TABLE IF NOT EXISTS capture_blobs (
+  member_id VARCHAR(36) NOT NULL, blob_key VARCHAR(64) NOT NULL, data TEXT NOT NULL, chars INTEGER NOT NULL,
+  first_seen TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (member_id, blob_key)
+);
 CREATE TABLE IF NOT EXISTS request_events (
   request_id VARCHAR(36) NOT NULL, request_started_at TIMESTAMP WITH TIME ZONE NOT NULL,
   observed_at TIMESTAMP WITH TIME ZONE NOT NULL, sequence INTEGER NOT NULL, elapsed_ms BIGINT NOT NULL,

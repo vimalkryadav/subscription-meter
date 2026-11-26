@@ -115,13 +115,17 @@ public class SessionSummarizer {
     private String digest(String member, String session, Instant through) {
         // Prefer the newest main-conversation request (no sub-agent id, not a small helper model):
         // Claude Code resends the whole conversation, so it holds the session's history.
-        var bodies = jdbc.queryForList("""
-            SELECT d.request_body FROM requests r JOIN request_details d ON d.request_id=r.id AND d.started_at=r.started_at
+        var rows = jdbc.queryForList("""
+            SELECT d.request_body,d.body_format,d.body_manifest,d.member_id FROM requests r JOIN request_details d ON d.request_id=r.id AND d.started_at=r.started_at
             WHERE r.member_id=? AND r.client_session_id=? AND r.client_agent_id IS NULL AND r.path='/v1/messages'
-            AND r.started_at<=? AND d.request_body IS NOT NULL AND LENGTH(d.request_body)<=?
+            AND r.started_at<=? AND (d.request_body IS NOT NULL OR d.body_format=2) AND COALESCE(d.body_chars,LENGTH(d.request_body))<=?
             ORDER BY CASE WHEN LOWER(r.model) LIKE '%haiku%' THEN 1 ELSE 0 END, r.started_at DESC LIMIT 1
-            """, String.class, member, session, Timestamp.from(through), SessionDigest.MAX_BODY_CHARS);
-        if (bodies.isEmpty()) return null;
+            """, member, session, Timestamp.from(through), SessionDigest.MAX_BODY_CHARS);
+        if (rows.isEmpty()) return null;
+        var row = rows.getFirst();
+        new dev.subscriptionmeter.audit.CaptureBlobStore(jdbc).resolve(row, "member_id");
+        var bodies = java.util.Collections.singletonList((String) row.get("request_body"));
+        if (bodies.getFirst() == null) return null;
         var stats = jdbc.queryForMap("""
             SELECT COUNT(*) AS requests,SUM(CASE WHEN client_agent_id IS NOT NULL THEN 1 ELSE 0 END) AS agents,
             MIN(started_at) AS first_at,MAX(started_at) AS last_at FROM requests WHERE member_id=? AND client_session_id=? AND started_at<=?

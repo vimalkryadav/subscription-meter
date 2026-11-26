@@ -48,11 +48,13 @@ public class JdbcAuditStore implements AuditStore {
     }
     public Optional<Map<String,Object>> detail(String id) {
         var rows = jdbc.queryForList("""
-            SELECT r.*,m.name,d.request_id AS detail_id,d.request_headers,d.request_body,d.query_string,d.peer_address,
+            SELECT r.*,m.name,d.request_id AS detail_id,d.request_headers,d.request_body,d.body_format,d.body_manifest,d.query_string,d.peer_address,
             d.protocol,d.method,d.upstream_mode,d.response_headers,d.response_body,d.capture_state,d.response_bytes,
             d.request_bytes,d.captured_bytes,d.event_count,d.truncated,d.upstream_headers_ms,d.first_byte_ms,d.error_type,d.error_message
             FROM requests r JOIN members m ON m.id=r.member_id LEFT JOIN request_details d ON d.request_id=r.id WHERE r.id=?
             """, id);
+        var blobs=new CaptureBlobStore(jdbc);
+        rows.forEach(row->blobs.resolve(row,"member_id"));
         return rows.stream().findFirst();
     }
     public List<Map<String,Object>> events(String id, int after, int limit) {

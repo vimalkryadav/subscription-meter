@@ -439,6 +439,21 @@ Capture limits (Kafka mode stops forwarding at a limit; JDBC mode marks truncati
 | Maximum individual SSE frame retained | 512 KiB |
 | Retention of captured data | Kept indefinitely (`AUDIT_RETENTION_DAYS=0`) |
 
+Request bodies are stored once per message. Claude Code resends the whole
+conversation every turn, so `CaptureCompactor` splits each finished inline body
+into pieces (`system`, `tools`, each message) kept once per member in
+`capture_blobs`, with an ordered manifest on the `request_details` row. It runs
+in the app, newest rows first, controlled by `CAPTURE_COMPACTOR_MODE`:
+
+| Mode | Effect |
+|---|---|
+| `off` | Nothing runs. |
+| `shadow` (default) | Stores pieces and the manifest and checks that the body rebuilt from the database equals the inline body exactly (`body_check` 1 = match, 2 = mismatch, 3 = error). The inline body is kept. |
+| `compact` | As shadow, and clears the inline body only when that exact check passes. Readers rebuild it transparently; a mismatch keeps the row inline. |
+
+Metrics: `meter_capture_compactor_rows_total{result}`, `meter_capture_compactor_body_chars_total`
+(inline characters examined) and `meter_capture_compactor_new_chars_total` (characters newly stored).
+
 Retention policy changes require a new migration; serving-instance environment
 variables do not change existing database policies.
 

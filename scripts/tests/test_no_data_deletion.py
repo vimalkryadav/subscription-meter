@@ -14,6 +14,7 @@ PATTERNS = [
     re.compile(r'\bDELETE\s+FROM\s+' + CAPTURED + r'\b', re.I),
     re.compile(r'\bTRUNCATE\b[^;]*\b' + CAPTURED + r'\b', re.I),
     re.compile(r'\bDROP\s+TABLE\b[^;]*\b' + CAPTURED + r'\b', re.I),
+    re.compile(r'request_body\s*=\s*NULL', re.I),
 ]
 # Historical migrations stay byte-identical (checksummed); the mock-data script
 # removes only fixture rows that never were member traffic.
@@ -21,6 +22,8 @@ ALLOWED = {
     'deploy/timescale-migrations/V001__hypertables.sql',
     'deploy/timescale-migrations/V002__request_details_seven_days.sql',
     'deploy/remove-mock-data.sql',
+    # Clears an inline body only after an exact rebuild from stored pieces is verified.
+    'src/main/java/dev/subscriptionmeter/audit/CaptureCompactor.java',
 }
 SCANNED = ('deploy', 'scripts', 'src/main')
 

@@ -42,11 +42,12 @@ V2_TABLES = LEGACY_TABLES + ('audit_operations', 'audit_payload_parts', 'account
                          'admin_action_log', 'control_schema_history', 'gateway_instances',
                          'coordination_locks', 'gateway_admissions', 'auth_attempts')
 
-TABLES = V2_TABLES + ('portal_refresh_families', 'portal_access_tokens', 'portal_refresh_tokens')
+V3_TABLES = V2_TABLES + ('portal_refresh_families', 'portal_access_tokens', 'portal_refresh_tokens')
+TABLES = V3_TABLES + ('capture_blobs',)
 
-def inventory_sql(version=3):
-    if version not in (1, 2, 3): raise ValueError('Unsupported inventory version')
-    tables = {1: LEGACY_TABLES, 2: V2_TABLES, 3: TABLES}[version]
+def inventory_sql(version=4):
+    if version not in (1, 2, 3, 4): raise ValueError('Unsupported inventory version')
+    tables = {1: LEGACY_TABLES, 2: V2_TABLES, 3: V3_TABLES, 4: TABLES}[version]
     query = 'SELECT json_build_object(' + ','.join(
         "'%s',(SELECT count(*) FROM %s)" % (name, name) for name in tables)
     query += ", 'adminCount',(SELECT count(*) FROM portal_accounts WHERE role='admin'), 'hypertables',(SELECT count(*) FROM timescaledb_information.hypertables), 'timescaleVersion',(SELECT extversion FROM pg_extension WHERE extname='timescaledb')"
@@ -146,7 +147,7 @@ def sql(container, query, database='meter', tcp=False):
                    '-U', 'meter', '-d', database] + (['-h', '127.0.0.1'] if tcp else []), input=query)
 
 
-def inventory(container, version=3):
+def inventory(container, version=4):
     return json.loads(sql(container, inventory_sql(version), tcp=True))
 
 
@@ -173,7 +174,7 @@ def snapshot(container):
             raise RuntimeError('Invalid snapshot identifier')
         # The release checkout can advance before its additive migration is applied.
         # Choose the inventory from the same exported snapshot, preserving pre-upgrade backups.
-        proc.stdin.write("SELECT CASE WHEN to_regclass('portal_refresh_families') IS NULL THEN 2 ELSE 3 END;\n")
+        proc.stdin.write("SELECT CASE WHEN to_regclass('portal_refresh_families') IS NULL THEN 2 WHEN to_regclass('capture_blobs') IS NULL THEN 3 ELSE 4 END;\n")
         proc.stdin.flush()
         version = int(read_line(proc))
         proc.stdin.write(inventory_sql(version) + '\n')
