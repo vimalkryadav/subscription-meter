@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.*;
 
 class CaptureCompactorTest {
     JdbcTemplate jdbc; TransactionTemplate tx;
-    final Instant old = Instant.now().minusSeconds(3600);
+    final Instant old = Instant.now().minusSeconds(3600).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
 
     @BeforeEach void setup() {
         var ds = new DriverManagerDataSource("jdbc:h2:mem:compact-" + UUID.randomUUID() + ";MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE", "sa", "");
