@@ -13,7 +13,7 @@ class OperationsControllerTest {
     final Instant now=Instant.parse("2026-11-05T00:00:00Z");
     String report(Instant generated) {
         var rows=new ArrayList<Map<String,Object>>();
-        for(String id:List.of("gateway","prometheus","worker_ready","worker_lag","audit_guard","upstream_auth","disk","backup","restore","backup_capacity"))
+        for(String id:List.of("gateway","prometheus","worker_ready","worker_lag","audit_guard","upstream_auth","disk","backup","restore","backup_capacity","body_integrity","growth_runway"))
             rows.add(Map.of("id",id,"state","ok","value",1,"consecutiveFailures",0,"unit","secret-unit","label","secret-label","payload","secret-capture"));
         return JsonMapper.builder().build().writeValueAsString(Map.of("schemaVersion",1,"generatedAt",generated.toString(),"checks",rows,"secret","credential"));
     }
@@ -26,7 +26,7 @@ class OperationsControllerTest {
     @Test void whitelistsMetadataAndMarksStaleAndFutureReports() throws Exception {
         Path file=folder.resolve("report.json");var controller=new OperationsController(file.toString(),Clock.fixed(now,ZoneOffset.UTC));
         Files.writeString(file,report(now));var result=controller.operations();
-        assertThat(result.status()).isEqualTo("ok");assertThat(result.checks()).hasSize(10);
+        assertThat(result.status()).isEqualTo("ok");assertThat(result.checks()).hasSize(12);
         assertThat(JsonMapper.builder().build().writeValueAsString(result)).doesNotContain("secret", "credential");
         Files.writeString(file,report(now.minusSeconds(181)));assertThat(controller.operations().stale()).isTrue();
         Files.writeString(file,report(now.plusSeconds(60)));assertThat(controller.operations().status()).isEqualTo("unavailable");

@@ -17,8 +17,9 @@ public class OperationsController {
         Map.entry("gateway","Gateway readiness"), Map.entry("prometheus","Gateway metrics collection"),
         Map.entry("worker_ready","Audit worker readiness"), Map.entry("worker_lag","Audit projection lag"),
         Map.entry("audit_guard","Audit admission guard"), Map.entry("upstream_auth","Upstream authentication responses"),
-        Map.entry("disk","Workspace disk headroom"), Map.entry("backup","Latest backup"), Map.entry("restore","Latest restore rehearsal"), Map.entry("backup_capacity","Backup capacity headroom"));
-    private static final Map<String,String> UNITS = Map.of("worker_lag","records","upstream_auth","responses / 10 min","disk","GiB free","backup","hours","restore","hours");
+        Map.entry("disk","Workspace disk headroom"), Map.entry("backup","Latest backup"), Map.entry("restore","Latest restore rehearsal"), Map.entry("backup_capacity","Backup capacity headroom"),
+        Map.entry("body_integrity","Stored request bodies rebuild exactly"), Map.entry("growth_runway","Days until storage limits"));
+    private static final Map<String,String> UNITS = Map.of("worker_lag","records","upstream_auth","responses / 10 min","disk","GiB free","backup","hours","restore","hours","body_integrity","rows / hour","growth_runway","days");
     @org.springframework.beans.factory.annotation.Autowired
     public OperationsController(@Value("${METER_OPERATIONS_REPORT:}") String path) { this(path, Clock.systemUTC()); }
     OperationsController(String path, Clock clock) { this.path=path; this.clock=clock; }
