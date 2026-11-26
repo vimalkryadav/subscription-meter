@@ -268,8 +268,12 @@ def prune():
     archives = completed_archives()
     verified = [archive for _, archive, meta in archives if meta.get('verifiedAt')]
     protected = verified[-1] if verified else None
+    # The first completed archive of each calendar month is kept indefinitely.
+    monthly = {}
+    for _, archive, _ in archives:
+        monthly.setdefault(archive.name[7:13], archive)
     for manifest, archive, _ in archives[:-BUDGET['retain_completed']]:
-        if archive == protected:
+        if archive == protected or monthly.get(archive.name[7:13]) == archive:
             continue
         archive.unlink()
         manifest.unlink()

@@ -5,6 +5,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -13,8 +14,16 @@ import org.springframework.stereotype.Repository;
 public class JdbcRequestQuery implements RequestQuery {
     private final JdbcTemplate jdbc;
     private final int retentionDays;
-    public JdbcRequestQuery(JdbcTemplate jdbc, @Value("${meter.audit.retention-days:7}") int retentionDays) {
-        this.jdbc=jdbc; this.retentionDays=retentionDays;
+    private final Instant deletedBefore;
+    /** retentionDays 0 = details are kept forever; only rows older than deletedBefore had their details removed. */
+    @Autowired
+    public JdbcRequestQuery(JdbcTemplate jdbc, @Value("${meter.audit.retention-days:0}") int retentionDays,
+                            @Value("${meter.audit.details-deleted-before:2026-11-19T00:00:00Z}") String deletedBefore) {
+        this.jdbc=jdbc; this.retentionDays=retentionDays; this.deletedBefore=Instant.parse(deletedBefore);
+    }
+    public JdbcRequestQuery(JdbcTemplate jdbc, int retentionDays) { this(jdbc, retentionDays, "2026-11-19T00:00:00Z"); }
+    private Timestamp expiredBefore() {
+        return Timestamp.from(retentionDays>0?Instant.now().minus(retentionDays,ChronoUnit.DAYS):deletedBefore);
     }
     private static final String JOIN = " FROM requests r JOIN members m ON m.id=r.member_id "
             + "LEFT JOIN request_details d ON d.request_id=r.id AND d.started_at=(SELECT MAX(latest.started_at) FROM request_details latest WHERE latest.request_id=r.id) "
@@ -32,7 +41,7 @@ public class JdbcRequestQuery implements RequestQuery {
         """;
     public List<Map<String,Object>> search(Filter f, Position before, int limit) {
         var args=new ArrayList<Object>();
-        args.add(Timestamp.from(Instant.now().minus(retentionDays,ChronoUnit.DAYS)));
+        args.add(expiredBefore());
         StringBuilder sql=new StringBuilder("SELECT r.*,m.name,d.capture_state,d.event_count,d.response_bytes,"
                 +"d.truncated,d.upstream_mode,d.first_byte_ms,COALESCE(a.manual_category,a.category,'unknown') AS work_category,"+CAPTURE+" AS capture_status"+JOIN
                 +"WHERE r.started_at>=? AND r.started_at<?");
@@ -49,7 +58,7 @@ public class JdbcRequestQuery implements RequestQuery {
         if(f.maxDurationMs()!=null){sql.append(" AND r.duration_ms<=?");args.add(f.maxDurationMs());}
         if(f.captureState()!=null&&!f.captureState().isBlank()){
             sql.append(" AND (").append(CAPTURE).append(")=?");
-            args.add(Timestamp.from(Instant.now().minus(retentionDays,ChronoUnit.DAYS)));args.add(f.captureState());
+            args.add(expiredBefore());args.add(f.captureState());
         }
         if(before!=null){sql.append(" AND (r.started_at<? OR (r.started_at=? AND r.id<?))");
             args.add(Timestamp.from(before.startedAt()));args.add(Timestamp.from(before.startedAt()));args.add(before.id());}
@@ -72,7 +81,7 @@ public class JdbcRequestQuery implements RequestQuery {
                 +"d.capture_state,d.response_bytes,d.request_bytes,d.captured_bytes,d.event_count,d.truncated,"
                 +"d.upstream_headers_ms,d.first_byte_ms,d.error_type,d.error_message,"+CAPTURE+" AS capture_status"
                 +JOIN+"WHERE r.id=? ORDER BY r.started_at DESC LIMIT 1",
-                Timestamp.from(Instant.now().minus(retentionDays,ChronoUnit.DAYS)),id);
+                expiredBefore(),id);
         return rows.stream().findFirst();
     }
     public Optional<CaptureContent> content(String id,Instant startedAt,CaptureSection section){

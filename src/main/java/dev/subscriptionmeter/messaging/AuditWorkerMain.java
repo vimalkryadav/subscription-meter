@@ -34,7 +34,7 @@ public final class AuditWorkerMain {
         var ds=new com.zaxxer.hikari.HikariDataSource(pool);
         var jdbc=new JdbcTemplate(ds);jdbc.setQueryTimeout(5);
         var projector=new JdbcAuditProjector(jdbc,new TransactionTemplate(new DataSourceTransactionManager(ds)),
-                Integer.parseInt(env("AUDIT_RETENTION_DAYS","7")),Integer.parseInt(env("AUDIT_METADATA_RETENTION_DAYS","90")));
+                Integer.parseInt(env("AUDIT_RETENTION_DAYS","0")),Integer.parseInt(env("AUDIT_METADATA_RETENTION_DAYS","0")));
         Properties p=new Properties();p.put("bootstrap.servers",required("METER_AUDIT_KAFKA_BOOTSTRAP_SERVERS"));
         p.put("group.id",env("METER_AUDIT_KAFKA_GROUP","control-usage-audit-v1"));p.put("enable.auto.commit",false);
         p.put("auto.offset.reset","none");p.put("max.poll.records",16);p.put("max.partition.fetch.bytes",524288);

@@ -151,17 +151,33 @@ class BackupTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'Docker storage'):
                 backup.capacity(1024)
 
+    def test_prune_keeps_first_archive_of_each_month(self):
+        october = self.store / 'backup-20261031T010000Z-1234abcd.dump'
+        october.write_bytes(b'PGDMPfixture')
+        backup.write_json(october.with_suffix('.json'), {'image': 'sha256:' + 'a' * 64, 'sha256': backup.digest(october), 'inventory': {}})
+        first, _ = self.archive(1)
+        for day in range(2, 12):
+            self.archive(day)
+        backup.prune()
+        names = [a.name for _, a, _ in backup.completed_archives()]
+        self.assertIn(october.name, names)
+        self.assertIn(first.name, names)
+        self.assertNotIn('backup-20261102T010000Z-1234abcd.dump', names)
+        self.assertEqual(backup.BUDGET['retain_completed'] + 2, len(names))
+
     def test_new_verified_archive_releases_previously_protected_copy(self):
-        old, _ = self.archive(1, True)
-        for day in range(2, 9):
+        monthly, _ = self.archive(1)
+        old, _ = self.archive(2, True)
+        for day in range(3, 10):
             self.archive(day)
         backup.prune()
         self.assertTrue(old.exists())
-        latest, meta = self.archive(8, True)
+        latest, meta = self.archive(9, True)
         backup.prune()
         self.assertFalse(old.exists())
         self.assertTrue(latest.exists())
-        self.assertEqual(backup.BUDGET['retain_completed'], len(backup.completed_archives()))
+        self.assertTrue(monthly.exists())
+        self.assertEqual(backup.BUDGET['retain_completed'] + 1, len(backup.completed_archives()))
 
     def test_coupled_policy_rejects_insufficient_store_and_invalid_values(self):
         original = dict(backup.BUDGET)

@@ -15,9 +15,13 @@ public final class JdbcAuditProjector {
     private final TransactionTemplate transactions;
     private final AuditCodec codec=new AuditCodec();
     private final int captureDays,metadataDays;
+    /** 0/0 = keep every capture forever: nothing is expired or discarded. */
+    private final boolean keepForever;
     public JdbcAuditProjector(JdbcTemplate jdbc,TransactionTemplate transactions){this(jdbc,transactions,30,90);}
     public JdbcAuditProjector(JdbcTemplate jdbc,TransactionTemplate transactions,int captureDays,int metadataDays){
-        if(captureDays<1||metadataDays<captureDays||metadataDays>3650)throw new IllegalArgumentException("Invalid audit retention");
+        boolean forever=captureDays==0&&metadataDays==0;
+        if(!forever&&(captureDays<1||metadataDays<captureDays||metadataDays>3650))throw new IllegalArgumentException("Invalid audit retention");
+        this.keepForever=forever;
         this.jdbc=jdbc;this.store=new JdbcAuditStore(jdbc);this.transactions=transactions;this.captureDays=captureDays;this.metadataDays=metadataDays;
     }
     public void accept(AuditEnvelope e){
@@ -38,7 +42,7 @@ public final class JdbcAuditProjector {
                 || ((Number)op.get("part_count")).intValue()!=e.parts() || ((Number)op.get("payload_bytes")).intValue()!=e.payloadBytes())
             throw new AuditUnavailableException("Conflicting audit operation identity");
         if(Boolean.TRUE.equals(op.get("completed")))return;
-        if(Instant.parse(e.observedAt()).isBefore(Instant.now().minus(java.time.Duration.ofDays(e.kind().equals("RESULT")?metadataDays:captureDays)))){
+        if(!keepForever&&Instant.parse(e.observedAt()).isBefore(Instant.now().minus(java.time.Duration.ofDays(e.kind().equals("RESULT")?metadataDays:captureDays)))){
             expire(e.operationId());return;
         }
         byte[] decoded=Base64.getDecoder().decode(e.data());
@@ -107,6 +111,7 @@ public final class JdbcAuditProjector {
     }
     /** Bounded cleanup keeps tombstones so delayed parts cannot resurrect expired request bodies. */
     public void expireIncomplete(){
+        if(keepForever)return;
         transactions.executeWithoutResult(status->{
             var ids=jdbc.queryForList("""
                 SELECT operation_id FROM audit_operations WHERE completed=FALSE

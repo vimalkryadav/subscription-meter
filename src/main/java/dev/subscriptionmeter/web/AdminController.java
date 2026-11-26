@@ -25,7 +25,7 @@ public class AdminController {
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final dev.subscriptionmeter.audit.AuditStore audit;
     private final AdminActionAudit actionAudit;
-    @Value("${meter.audit.retention-days:7}") private int retentionDays;
+    @Value("${meter.audit.retention-days:0}") private int retentionDays;
     @Value("${meter.audit.timescale-enabled:false}") private boolean timescale;
     public AdminController(MemberService members, AnalyticsReader analytics, @Value("${meter.mode}") String mode,
             @Value("${meter.upstream-token-file}") String tokenFile,org.springframework.jdbc.core.JdbcTemplate jdbc,

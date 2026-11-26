@@ -71,6 +71,15 @@ class RequestSearchTest {
         var result=controller.search(old.minusSeconds(1),old.plusSeconds(1),"","","","","",null,"expired",null,null,null,"","","","","","",25,"",new MockHttpServletResponse());
         assertThat(result.items()).hasSize(1);assertThat(result.items().getFirst().get("capture_status")).isEqualTo("expired");
     }
+    @Test void keepForeverOnlyMarksRowsFromBeforeTheDeletionCutoffAsExpired(){
+        var forever=new RequestSearchController(new JdbcRequestQuery(jdbc,0,"2026-11-19T00:00:00Z"));
+        Instant deleted=Instant.parse("2026-11-18T12:00:00Z"), kept=Instant.parse("2026-11-20T12:00:00Z");
+        request("deleted",deleted,"model");request("kept",kept,"model");
+        var before=forever.search(deleted.minusSeconds(1),deleted.plusSeconds(1),"","","","","",null,"",null,null,null,"","","","","","",25,"",new MockHttpServletResponse());
+        assertThat(before.items().getFirst().get("capture_status")).isEqualTo("expired");
+        var after=forever.search(kept.minusSeconds(1),kept.plusSeconds(1),"","","","","",null,"",null,null,null,"","","","","","",25,"",new MockHttpServletResponse());
+        assertThat(after.items().getFirst().get("capture_status")).isEqualTo("unavailable");
+    }
     @Test void incompleteResponsesNeverLookLikeCompleteCapturesAndFilterMatchesDetails(){
         var query=new JdbcRequestQuery(jdbc,30);
         for(String state:List.of("partial","disconnected","interrupted","stream_error","gateway_error")){
