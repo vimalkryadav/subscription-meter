@@ -35,8 +35,9 @@ No extra infrastructure or off-host storage has been provisioned.
 The backup and its row-count inventory share one exported, read-only PostgreSQL
 snapshot. A completed custom-format archive receives a SHA-256 checksum and the
 exact database image ID. Source tables, credentials, admin roles and active
-requests are not changed. The latest four completed archives and the latest
-successfully restore-tested archive are retained. This can retain captured data
+requests are not changed. The latest four completed archives, the latest
+successfully restore-tested archive, and the first completed archive of every
+calendar month are retained; monthly archives are never pruned. This can retain captured data
 beyond its active-database retention period; do not treat database chunk deletion
 as deletion from backups. A failed restore preserves the previous verified copy.
 
