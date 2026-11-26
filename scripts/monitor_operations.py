@@ -13,7 +13,13 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / 'deploy/operations'
-CHECKS = ('gateway', 'prometheus', 'worker_ready', 'worker_lag', 'audit_guard', 'upstream_auth', 'disk', 'backup', 'restore', 'backup_capacity')
+CHECKS = ('gateway', 'prometheus', 'worker_ready', 'worker_lag', 'audit_guard', 'upstream_auth', 'disk', 'backup', 'restore', 'backup_capacity',
+          'body_integrity', 'growth_runway')
+# Alert when either budget is projected to run out within this many days.
+RUNWAY_ALERT_DAYS = 14
+RUNWAY_MIN_HISTORY_HOURS = 24
+RUNWAY_KEEP_HOURS = 8 * 24
+ROOT_DISK_FLOOR = 10 * 1024**3
 
 def read_json(path):
     with path.open('rb') as stream:
@@ -58,6 +64,42 @@ def capacity_check(data, now):
     if age > 3/60 or data.get('status') not in ('ok', 'warning', 'failed'):
         return ('unknown', None, '')
     return ('ok' if data['status'] == 'ok' else 'failed', None, '')
+
+def runway_samples(capacity, now, history_path):
+    """Hourly (time, database bytes, Docker filesystem free bytes) samples, at most eight days."""
+    rows = {r.get('id'): r for r in capacity.get('rows', []) if isinstance(r, dict)}
+    database, docker = rows.get('database'), rows.get('docker_free')
+    if not database or not docker: raise ValueError('capacity rows missing')
+    sample = [now, int(database['usedBytes']), int(database['limitBytes']), int(docker['limitBytes'])]
+    try: history = read_json(history_path).get('samples', [])
+    except Exception: history = []
+    history = [h for h in history if isinstance(h, list) and len(h) == 4 and now - RUNWAY_KEEP_HOURS * 3600 <= h[0] <= now]
+    if not history or now - history[-1][0] >= 3600: history.append(sample)
+    temporary = history_path.with_suffix('.tmp')
+    with temporary.open('w') as stream: json.dump({'samples': history}, stream)
+    os.replace(temporary, history_path)
+    return history, sample
+
+def runway_days(history, sample):
+    """Days until the database reaches the backup budget or the Docker filesystem drops below its floor."""
+    first = history[0]
+    hours = (sample[0] - first[0]) / 3600
+    if hours < RUNWAY_MIN_HISTORY_HOURS: return None
+    days = hours / 24
+    growth = (sample[1] - first[1]) / days
+    shrink = (first[3] - sample[3]) / days
+    limits = []
+    if growth > 0: limits.append((sample[2] - sample[1]) / growth)
+    if shrink > 0: limits.append((sample[3] - ROOT_DISK_FLOOR) / shrink)
+    return max(0.0, min(limits)) if limits else float('inf')
+
+def runway_check(capacity, now, history_path):
+    if age_hours(capacity.get('generatedAt', ''), now) > 3/60: return ('unknown', None, 'days')
+    history, sample = runway_samples(capacity, now, history_path)
+    days = runway_days(history, sample)
+    if days is None: return ('ok', None, 'days')
+    if days == float('inf'): return ('ok', 999.0, 'days')
+    return ('ok' if days >= RUNWAY_ALERT_DAYS else 'failed', round(min(days, 999.0), 1), 'days')
 
 def collect(now):
     result = {}
@@ -106,6 +148,12 @@ def collect(now):
     for restore, key in ((False, 'backup'), (True, 'restore')):
         check(key, lambda restore=restore: backup_check(read_json(REPORT_DIR/'backup-status.json'), restore, now))
     check('backup_capacity', lambda: capacity_check(read_json(REPORT_DIR/'backup-capacity.json'), now))
+    check('growth_runway', lambda: runway_check(read_json(REPORT_DIR/'backup-capacity.json'), now, REPORT_DIR/'runway-history.json'))
+    if result.get('prometheus', ('unknown',))[0] == 'ok':
+        # Any body that did not rebuild exactly stays inline, but needs a look.
+        metric('body_integrity', 'sum(increase(meter_capture_compactor_rows_total{result=~"mismatch|error"}[1h])) or vector(0)', lambda v: v == 0, 'rows / hour')
+    else:
+        result['body_integrity'] = ('unknown', None, 'rows / hour')
     return result
 
 def report(checks, previous, now):

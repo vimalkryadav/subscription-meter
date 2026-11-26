@@ -95,4 +95,30 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(m.capacity_check(data,now+181)[0],'unknown')
         data['status']='unknown';self.assertEqual(m.capacity_check(data,now)[0],'unknown')
 
+    def capacity(self,now,db,free,limit=32*1024**3):
+        return {'generatedAt':dt.datetime.fromtimestamp(now,dt.timezone.utc).isoformat(),'status':'ok','rows':[
+            {'id':'database','usedBytes':db,'limitBytes':limit},{'id':'docker_free','usedBytes':0,'limitBytes':free}]}
+    def test_growth_runway_projects_days_to_the_nearest_limit(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            history=Path(folder)/'runway.json';now=1800000000;gib=1024**3
+            # Under a day of samples: not enough history to project, not an alert.
+            self.assertEqual(m.runway_check(self.capacity(now,14*gib,33*gib),now,history),('ok',None,'days'))
+            # Database grows 2.5 GiB/day toward 32 GiB while the root disk shrinks 2.5 GiB/day from 33 GiB.
+            for hour in range(1,49):
+                t=now+hour*3600;db=14*gib+2.5*gib*hour/24;free=33*gib-2.5*gib*hour/24
+                state,days,unit=m.runway_check(self.capacity(t,int(db),int(free)),t,history)
+            self.assertEqual(state,'failed');self.assertEqual(unit,'days')
+            self.assertAlmostEqual(days,(32-19)/2.5,delta=0.2)
+            self.assertLessEqual(len(m.read_json(history)['samples']),m.RUNWAY_KEEP_HOURS+1)
+    def test_flat_growth_has_unlimited_runway_and_stale_capacity_is_unknown(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            history=Path(folder)/'runway.json';now=1800000000;gib=1024**3
+            for hour in range(0,30): m.runway_check(self.capacity(now+hour*3600,14*gib,33*gib),now+hour*3600,history)
+            self.assertEqual(m.runway_check(self.capacity(now+30*3600,14*gib,33*gib),now+30*3600,history),('ok',999.0,'days'))
+            self.assertEqual(m.runway_check(self.capacity(now,14*gib,33*gib),now+3600,history)[0],'unknown')
+    def test_body_integrity_is_a_reported_check(self):
+        self.assertIn('body_integrity',m.CHECKS);self.assertIn('growth_runway',m.CHECKS)
+
 if __name__=='__main__':unittest.main()

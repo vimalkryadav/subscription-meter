@@ -34,7 +34,7 @@ public class CaptureCompactor {
     private final Duration minAge;
 
     public CaptureCompactor(JdbcTemplate jdbc, TransactionTemplate tx, MeterRegistry metrics,
-                            @Value("${meter.capture.compactor.mode:shadow}") String mode,
+                            @Value("${meter.capture.compactor.mode:compact}") String mode,
                             @Value("${meter.capture.compactor.batch:20}") int batch,
                             @Value("${meter.capture.compactor.min-age-seconds:300}") long minAgeSeconds) {
         this.mode = mode.toLowerCase(Locale.ROOT);

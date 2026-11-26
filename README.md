@@ -448,11 +448,19 @@ in the app, newest rows first, controlled by `CAPTURE_COMPACTOR_MODE`:
 | Mode | Effect |
 |---|---|
 | `off` | Nothing runs. |
-| `shadow` (default) | Stores pieces and the manifest and checks that the body rebuilt from the database equals the inline body exactly (`body_check` 1 = match, 2 = mismatch, 3 = error). The inline body is kept. |
-| `compact` | As shadow, and clears the inline body only when that exact check passes. Readers rebuild it transparently; a mismatch keeps the row inline. |
+| `shadow` | Stores pieces and the manifest and checks that the body rebuilt from the database equals the inline body exactly (`body_check` 1 = match, 2 = mismatch, 3 = error). The inline body is kept. |
+| `compact` (default) | As shadow, and clears the inline body only when that exact check passes. Readers rebuild it transparently; a mismatch keeps the row inline. |
 
 Metrics: `meter_capture_compactor_rows_total{result}`, `meter_capture_compactor_body_chars_total`
 (inline characters examined) and `meter_capture_compactor_new_chars_total` (characters newly stored).
+The operations check `body_integrity` alerts on any mismatch or error.
+
+Clearing inline bodies frees space inside each daily chunk; new rows reuse it
+in today's chunk. Older chunks return it to disk only when rewritten:
+`CONTROL_USAGE_DOCKER_SUDO=1 python3 scripts/reclaim_capture_space.py` lists
+finished chunks, and `--apply` rewrites them one at a time with `VACUUM FULL`,
+checking that the row count is unchanged (it stops otherwise). A chunk with any
+body still awaiting conversion is skipped. Run it after a verified backup.
 
 Retention policy changes require a new migration; serving-instance environment
 variables do not change existing database policies.

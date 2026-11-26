@@ -15,6 +15,8 @@ const explanations: Record<string, string> = {
   backup: 'Successful backup within 30 hours; a failed latest attempt needs attention.',
   backup_capacity: 'Warns before archive, database, store or restore-space budgets are exhausted.',
   restore: 'Successful isolated restore rehearsal within eight days; a failed latest attempt needs attention.',
+  body_integrity: 'Request bodies stored as pieces must rebuild exactly; any mismatch or error in the last hour needs a look (the body stays inline).',
+  growth_runway: 'Projected days until the database reaches the backup budget or the root disk drops below 10 GiB, from up to a week of hourly samples. Alerts under 14 days.',
 };
 type View = 'health' | 'capacity' | 'recovery' | 'stream';
 export default function Operations() {
