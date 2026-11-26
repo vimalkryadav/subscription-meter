@@ -30,6 +30,11 @@ MAX_ARCHIVE = BUDGET["max_archive_bytes"]
 MAX_DATABASE = BUDGET["max_database_bytes"]
 MAX_STORE = BUDGET["max_store_bytes"]
 MIN_FREE = BUDGET["min_free_bytes"]
+# The restore drill's database lives on the backup filesystem (see restore()),
+# so Docker's filesystem only needs room for the container layer and logs.
+RESTORE_CONTAINER_FREE = 2 * 1024**3
+DUMP_SECONDS = 3600
+RESTORE_SECONDS = 5400
 LEGACY_TABLES = ('members', 'portal_accounts', 'portal_sessions', 'portal_key_requests',
           'requests', 'request_details', 'request_events', 'gateway_access',
           'request_assessments', 'provider_quota_snapshots', 'subscription_invoices')
@@ -221,7 +226,7 @@ def capacity(database_bytes):
         raise RuntimeError('Backup storage budget requires review')
     if shutil.disk_usage(STORE).free < max(MIN_FREE, database_bytes * 2 + MAX_ARCHIVE):
         raise RuntimeError('Insufficient free space for safe backup and restore')
-    if docker_storage_free() < max(MIN_FREE, database_bytes * 2 + MAX_ARCHIVE):
+    if docker_storage_free() < RESTORE_CONTAINER_FREE:
         raise RuntimeError('Insufficient Docker storage for safe restore')
 
 
@@ -241,7 +246,7 @@ def capacity_report():
                         ('database', size, MAX_DATABASE, 0),
                         ('store', used, MAX_STORE, MAX_ARCHIVE),
                         ('backup_free', required, shutil.disk_usage(STORE).free, 0),
-                        ('docker_free', required, docker_storage_free(), 0)]
+                        ('docker_free', RESTORE_CONTAINER_FREE, docker_storage_free(), 0)]
         for name, value, limit, reserve in observations:
             state = 'failed' if value + reserve > limit else 'warning' if value * 100 >= limit * BUDGET['warning_percent'] else 'ok'
             result['rows'].append({'id': name, 'usedBytes': value, 'limitBytes': limit,
@@ -283,9 +288,9 @@ def backup():
             with partial.open('xb') as handle:
                 os.chmod(partial, 0o600)
                 # Bound both output here and the DB process inside the source container.
-                command = docker_command(['exec', container, 'timeout', '900', 'pg_dump', '-U', 'meter', '-d', 'meter', '-Fc',
+                command = docker_command(['exec', container, 'timeout', str(DUMP_SECONDS), 'pg_dump', '-U', 'meter', '-d', 'meter', '-Fc',
                                           '--no-owner', '--no-acl', '--lock-wait-timeout=10s', '--snapshot=' + identifier])
-                bounded_output(command, handle, MAX_ARCHIVE, 920)
+                bounded_output(command, handle, MAX_ARCHIVE, DUMP_SECONDS + 20)
                 handle.flush()
                 os.fsync(handle.fileno())
         with partial.open('rb') as handle:
@@ -302,20 +307,44 @@ def backup():
         partial.unlink(missing_ok=True)
 
 
+def restore_scratch():
+    # Mount root for the drill container. Its postgres user (not the operator)
+    # must traverse it; the parent backup directory stays 0700.
+    scratch = STORE / 'restore-scratch'
+    if scratch.is_symlink():
+        raise RuntimeError('Unsafe restore scratch directory')
+    scratch.mkdir(mode=0o711, exist_ok=True)
+    os.chmod(scratch, 0o711)
+    return scratch
+
+
+def clear_scratch(scratch, image):
+    # Files belong to the container's postgres user, so delete them from a
+    # network-less container of the same image instead of requiring host root.
+    docker(['run', '--rm', '--network', 'none', '--entrypoint', 'find',
+            '--mount', 'type=bind,src=' + str(scratch.resolve()) + ',dst=/scratch',
+            image, '/scratch', '-mindepth', '1', '-delete'], stdout=subprocess.DEVNULL, timeout=600)
+
+
 def restore(archive, meta):
     if archive.is_symlink() or not re.fullmatch('sha256:[0-9a-f]{64}', meta.get('image', '')):
         raise RuntimeError('Unsafe restore source')
     if digest(archive) != meta['sha256']:
         raise RuntimeError('Archive checksum mismatch')
-    if shutil.disk_usage(STORE).free < MIN_FREE:
-        raise RuntimeError('Insufficient restore space')
     database_bytes = int(meta.get('databaseBytes', MAX_DATABASE))
-    if not 0 < database_bytes <= MAX_DATABASE or docker_storage_free() < max(MIN_FREE, database_bytes * 2 + MAX_ARCHIVE):
+    if not 0 < database_bytes <= MAX_DATABASE or docker_storage_free() < RESTORE_CONTAINER_FREE:
         raise RuntimeError('Insufficient Docker restore space or invalid source size')
+    scratch = restore_scratch()
+    # Clears leftovers of an interrupted drill before measuring free space.
+    clear_scratch(scratch, meta['image'])
+    if shutil.disk_usage(STORE).free < max(MIN_FREE, database_bytes * 2):
+        raise RuntimeError('Insufficient restore space')
     name = 'control-usage-restore-' + uuid.uuid4().hex
     container = None
     try:
+        # The restored cluster is written to the backup filesystem, not Docker's.
         container = output(['run', '-d', '--rm', '--name', name, '--network', 'none',
+                            '--mount', 'type=bind,src=' + str(scratch.resolve()) + ',dst=/var/lib/postgresql',
                             '--label', 'dev.control-usage.restore-drill=true', '--memory', str(BUDGET['restore_memory_mib'])+'m', '--cpus', str(BUDGET['restore_cpus']),
                             '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-e', 'POSTGRES_USER=meter', '-e', 'POSTGRES_DB=meter',
                             '-e', 'TIMESCALEDB_TELEMETRY=off', '-e', 'NO_TS_TUNE=true',
@@ -333,7 +362,7 @@ def restore(archive, meta):
             time.sleep(1)
         sql(container, 'CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT timescaledb_pre_restore();', tcp=True)
         docker(['exec', container, 'pg_restore', '-U', 'meter', '-d', 'meter', '--no-owner', '--no-acl',
-                '--exit-on-error', '/backup.dump'], stdout=subprocess.DEVNULL, timeout=900)
+                '--exit-on-error', '/backup.dump'], stdout=subprocess.DEVNULL, timeout=RESTORE_SECONDS)
         sql(container, 'SELECT timescaledb_post_restore();', tcp=True)
         if inventory(container, meta.get('inventoryVersion', 1)) != meta['inventory']:
             raise RuntimeError('Restored inventory differs from the backup snapshot')
@@ -349,6 +378,7 @@ def restore(archive, meta):
                     docker(['rm', '-f', '-v', name], stdout=subprocess.DEVNULL)
             except subprocess.CalledProcessError:
                 pass
+        clear_scratch(scratch, meta['image'])
     meta['verifiedAt'] = now()
     write_json(archive.with_suffix('.json'), meta)
     update_status(lastRestoreAt=now(), lastRestoreState='ok')

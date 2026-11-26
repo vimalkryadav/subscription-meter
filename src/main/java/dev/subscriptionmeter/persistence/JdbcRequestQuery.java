@@ -13,7 +13,7 @@ import org.springframework.stereotype.Repository;
 public class JdbcRequestQuery implements RequestQuery {
     private final JdbcTemplate jdbc;
     private final int retentionDays;
-    public JdbcRequestQuery(JdbcTemplate jdbc, @Value("${meter.audit.retention-days:30}") int retentionDays) {
+    public JdbcRequestQuery(JdbcTemplate jdbc, @Value("${meter.audit.retention-days:7}") int retentionDays) {
         this.jdbc=jdbc; this.retentionDays=retentionDays;
     }
     private static final String JOIN = " FROM requests r JOIN members m ON m.id=r.member_id "

@@ -49,7 +49,7 @@ class BackupTest(unittest.TestCase):
         self.assertTrue(protected.exists())
         self.assertFalse(removed.exists())
         self.assertTrue(unrelated.exists())
-        self.assertEqual(8, len(backup.completed_archives()))
+        self.assertEqual(backup.BUDGET['retain_completed'] + 1, len(backup.completed_archives()))
 
     def test_checksum_failure_never_starts_restore(self):
         archive, meta = self.archive()
@@ -70,22 +70,31 @@ class BackupTest(unittest.TestCase):
             return 'test-container'
         with patch.object(backup, 'output', side_effect=output), patch.object(backup, 'docker', side_effect=command), \
                 patch.object(backup, 'sql', return_value='1'), patch.object(backup, 'inventory', return_value={'requests': 0}), \
-                patch.object(backup.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 10 * 1024**3})()):
+                patch.object(backup.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 80 * 1024**3})()):
             with self.assertRaisesRegex(RuntimeError, 'inventory'):
                 backup.restore(archive, meta)
-        run = commands[0]
+        run = next(c for c in commands if c[:2] == ['run', '-d'])
         self.assertEqual('none', run[run.index('--network') + 1])
         self.assertNotIn('-p', run)
         self.assertNotIn('--volumes-from', run)
         self.assertTrue(any('dst=/backup.dump,readonly' in part for part in run))
-        self.assertEqual(['rm', '-f', '-v', 'test-container'], commands[-1])
+        scratch = 'type=bind,src=' + str((self.store / 'restore-scratch').resolve()) + ','
+        self.assertIn(scratch + 'dst=/var/lib/postgresql', run)
+        removal = commands.index(['rm', '-f', '-v', 'test-container'])
+        cleanups = [i for i, c in enumerate(commands) if c[:2] == ['run', '--rm'] and scratch + 'dst=/scratch' in c]
+        self.assertEqual(2, len(cleanups))
+        self.assertLess(cleanups[0], commands.index(run))
+        self.assertGreater(cleanups[1], removal)
+        for index in cleanups:
+            self.assertEqual('none', commands[index][commands[index].index('--network') + 1])
+        self.assertEqual(0o711, (self.store / 'restore-scratch').stat().st_mode & 0o777)
         self.assertFalse(backup.REPORT.exists())
 
     def test_success_records_verification_only_after_matching_inventory(self):
         archive, meta = self.archive()
         with patch.object(backup, 'output', return_value='test-container'), patch.object(backup, 'docker'), \
                 patch.object(backup, 'sql', return_value='1'), patch.object(backup, 'inventory', return_value=meta['inventory']), \
-                patch.object(backup.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 10 * 1024**3})()):
+                patch.object(backup.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 80 * 1024**3})()):
             backup.restore(archive, meta)
         self.assertEqual('ok', json.loads(backup.REPORT.read_text())['lastRestoreState'])
         self.assertIn('verifiedAt', json.loads(archive.with_suffix('.json').read_text()))
@@ -124,6 +133,24 @@ class BackupTest(unittest.TestCase):
                 backup.restore(archive, meta)
             docker.assert_not_called()
 
+    def test_restore_needs_backup_filesystem_space_for_restored_cluster(self):
+        archive, meta = self.archive()
+        meta['databaseBytes'] = 20 * 1024**3
+        with patch.object(backup.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 30 * 1024**3})()), \
+                patch.object(backup, 'docker') as docker, patch.object(backup, 'output') as output:
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient restore space'):
+                backup.restore(archive, meta)
+            output.assert_not_called()
+            self.assertEqual(1, docker.call_count)
+
+    def test_backup_needs_only_container_headroom_on_docker_filesystem(self):
+        with patch.object(backup, 'docker_storage_free', return_value=backup.RESTORE_CONTAINER_FREE), \
+                patch.object(backup.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 80 * 1024**3})()):
+            backup.capacity(20 * 1024**3)
+        with patch.object(backup, 'docker_storage_free', return_value=backup.RESTORE_CONTAINER_FREE - 1):
+            with self.assertRaisesRegex(RuntimeError, 'Docker storage'):
+                backup.capacity(1024)
+
     def test_new_verified_archive_releases_previously_protected_copy(self):
         old, _ = self.archive(1, True)
         for day in range(2, 9):
@@ -134,12 +161,12 @@ class BackupTest(unittest.TestCase):
         backup.prune()
         self.assertFalse(old.exists())
         self.assertTrue(latest.exists())
-        self.assertEqual(7, len(backup.completed_archives()))
+        self.assertEqual(backup.BUDGET['retain_completed'], len(backup.completed_archives()))
 
     def test_coupled_policy_rejects_insufficient_store_and_invalid_values(self):
         original = dict(backup.BUDGET)
         path = self.store / 'policy.json'
-        for changes in ({'max_store_bytes': original['max_archive_bytes'] * 8}, {'max_database_bytes': 1}, {'restore_cpus': True}, {'warning_percent': 100}):
+        for changes in ({'max_store_bytes': original['max_archive_bytes'] * (original['retain_completed'] + 1)}, {'max_database_bytes': 1}, {'restore_cpus': True}, {'warning_percent': 100}):
             path.write_text(json.dumps({**original, **changes}))
             with self.assertRaises(ValueError): backup.backup_policy.load(path)
 
@@ -154,6 +181,7 @@ class BackupTest(unittest.TestCase):
         with self.assertRaises(ValueError): backup.inventory_sql(4)
         archive, meta = self.archive()
         with patch.object(backup,'output',return_value='owned-restore'),patch.object(backup,'docker'), \
+                patch.object(backup.shutil,'disk_usage',return_value=type('Disk',(),{'free':80*1024**3})()), \
                 patch.object(backup,'sql',return_value='1'),patch.object(backup,'inventory',return_value=meta['inventory']) as inv:
             backup.restore(archive,meta)
         inv.assert_called_once_with('owned-restore',1)
@@ -186,6 +214,8 @@ class BackupTest(unittest.TestCase):
         store=next(row for row in result['rows'] if row['id']=='store')
         self.assertEqual(store['reserveBytes'],backup.MAX_ARCHIVE)
         self.assertEqual(store['remainingBytes'],backup.MAX_STORE-store['usedBytes']-backup.MAX_ARCHIVE)
+        docker_row=next(row for row in result['rows'] if row['id']=='docker_free')
+        self.assertEqual(docker_row['usedBytes'],backup.RESTORE_CONTAINER_FREE)
         prune.assert_not_called()
         self.assertNotIn(str(self.store),json.dumps(result))
 
