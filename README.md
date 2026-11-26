@@ -362,8 +362,8 @@ remain distinguishable. Unknown final usage after process loss remains unknown.
 Client retries are separate attempts; the gateway never retries generation.
 Limits do not impose token budgets on an already active stream.
 
-Timescale policies retain details/events/access for 30 days and metadata for
-90 days by default, dropping whole daily chunks. Prometheus retains 15 days /
+Timescale policies retain captured request details for 7 days, events/access for
+30 days and metadata for 90 days by default, dropping whole daily chunks. Prometheus retains 15 days /
 2 GB. Kafka durability, projection lag, retention and failure behavior are
 described in [the audit pipeline guide](docs/audit-pipeline.md). This is one
 workspace with local volumes; blue/green does not provide host/database/tunnel
@@ -434,7 +434,8 @@ Capture limits (Kafka mode stops forwarding at a limit; JDBC mode marks truncati
 | `AUDIT_MAX_RESPONSE_BYTES` | 8 MiB per request |
 | `AUDIT_MAX_EVENTS` | 10,000 per request |
 | Maximum individual SSE frame retained | 512 KiB |
-| Detail/event/access retention policy | 30 days |
+| Request detail (body) retention policy | 7 days |
+| Event/access retention policy | 30 days |
 | Request metadata retention policy | 90 days |
 
 Retention policy changes require a new migration; serving-instance environment

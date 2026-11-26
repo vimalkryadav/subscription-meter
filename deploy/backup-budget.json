@@ -1,10 +1,10 @@
 {
-  "max_archive_bytes": 4294967296,
-  "max_database_bytes": 8589934592,
-  "max_store_bytes": 42949672960,
-  "min_free_bytes": 4294967296,
-  "retain_completed": 7,
+  "max_archive_bytes": 17179869184,
+  "max_database_bytes": 34359738368,
+  "max_store_bytes": 107374182400,
+  "min_free_bytes": 17179869184,
+  "retain_completed": 4,
   "warning_percent": 80,
-  "restore_memory_mib": 768,
-  "restore_cpus": 0.5
+  "restore_memory_mib": 1024,
+  "restore_cpus": 1
 }

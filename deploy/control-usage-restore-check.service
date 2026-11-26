@@ -9,7 +9,7 @@ WorkingDirectory=/home/coder/control-usage-deploy
 Environment=CONTROL_USAGE_DOCKER_SUDO=1
 Environment=CONTROL_USAGE_BACKUP_DIR=/home/coder/control-usage-backups
 ExecStart=/usr/bin/python3 /home/coder/control-usage-deploy/scripts/backup_database.py --verify-latest
-TimeoutStartSec=1200
+TimeoutStartSec=6600
 UMask=0077
 Nice=10
 IOSchedulingClass=idle

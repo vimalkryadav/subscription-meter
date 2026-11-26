@@ -265,7 +265,7 @@ The zero-budget public entry uses a Cloudflare Quick Tunnel with a generated hos
 
 ## Retention, backups and recovery
 
-The configured detail retention is shown under Connection; the deployment's default is 30 days. Request summaries may outlive detailed captures. Expired content cannot be reconstructed from token counts. Retention deletion in the active database does not delete data already retained in backups.
+The configured detail retention is shown under Connection; the deployment's default is 7 days. Full request bodies are large because Claude Code resends the whole conversation on every turn, so they are kept for a shorter time than request metadata (90 days). Request summaries may outlive detailed captures. Expired content cannot be reconstructed from token counts. Retention deletion in the active database does not delete data already retained in backups.
 
 Daily backups run at 01:15 UTC with jitter; a weekly restore rehearsal runs on Sundays at 02:15 UTC. The backup uses a consistent database snapshot, checksum and inventory. The isolated restore test compares recorded counts and schema/extension facts using the recorded database image. Operational reports expose freshness and success, not raw contents.
 

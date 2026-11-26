@@ -21,7 +21,8 @@ for the measured protocol comparison and its limits.
 `control-usage-backup.timer` runs daily at 01:15 UTC, with up to five minutes of
 jitter. `control-usage-restore-check.timer` verifies the newest completed archive
 on Sundays at 02:15 UTC. Both timers catch up after downtime and serialize through
-a private file lock. The restore drill is limited to 768 MiB RAM and half a CPU.
+a private file lock. The restore drill is limited to 1 GiB RAM and one CPU. The dump may run for
+up to 60 minutes and the drill's restore for up to 90 minutes.
 
 Archives stay in `/home/coder/control-usage-backups`, outside the repository and
 public assets. The directory is mode 0700 and archives/manifests are mode 0600.
@@ -34,17 +35,19 @@ No extra infrastructure or off-host storage has been provisioned.
 The backup and its row-count inventory share one exported, read-only PostgreSQL
 snapshot. A completed custom-format archive receives a SHA-256 checksum and the
 exact database image ID. Source tables, credentials, admin roles and active
-requests are not changed. The latest seven completed archives and the latest
+requests are not changed. The latest four completed archives and the latest
 successfully restore-tested archive are retained. This can retain captured data
 beyond its active-database retention period; do not treat database chunk deletion
 as deletion from backups. A failed restore preserves the previous verified copy.
 
-Storage limits fail closed and are validated together in `deploy/backup-budget.json`: 4 GiB per archive, 40 GiB total archive-directory
-budget, source database at most 8 GiB, and at least 4 GiB free filesystem space
+Storage limits fail closed and are validated together in `deploy/backup-budget.json`: 16 GiB per archive, 100 GiB total archive-directory
+budget, source database at most 32 GiB, and at least 16 GiB free filesystem space
 with additional room based on database size. Crossing a limit produces an alert;
-it does not delete unverified or unrelated operator files to make room. The store must fit seven retained archives, an older protected verified copy, and a pending archive plus metadata overhead. Review these coupled limits before sustained volume outgrows them. The restore drill remains limited to 768 MiB and half a CPU; a larger bound does not prove every possible archive at that bound has been rehearsed.
+it does not delete unverified or unrelated operator files to make room. The store must fit four retained archives, an older protected verified copy, and a pending archive plus metadata overhead. Review these coupled limits before sustained volume outgrows them. The restore drill remains limited to 1 GiB and one CPU; a larger bound does not prove every possible archive at that bound has been rehearsed.
 
-The archive ceiling was increased after a real dump exceeded 2 GiB. The store budget grows with it: seven retained archives, one protected verified archive, and one pending archive require up to 36 GiB plus manifest overhead. These are ceilings, not preallocated space. Each run still checks current free space on both filesystems before dumping or restoring.
+The archive ceiling was increased after a real dump exceeded 2 GiB, and again in November 2026 when the database passed 20 GiB (archives are about 0.6× the database size). The store budget grows with it: four retained archives, one protected verified archive, and one pending archive require up to 96 GiB plus manifest overhead. These are ceilings, not preallocated space. Each run still checks current free space on both filesystems before dumping or restoring.
+
+The restore drill writes its isolated database to `restore-scratch/` inside the backup directory, on the backup filesystem, so it needs about twice the source database size free there. Docker's filesystem only needs 2 GiB for the drill container. The scratch directory is emptied before and after each drill by a network-less container of the same image, because its files belong to the container's postgres user.
 
 A separate `control-usage-backup-capacity.timer` collects size-only database, archive, store and restore-filesystem observations every minute. It does not dump, restore or prune. Operations shows fixed ceilings, next-archive reservation, source timestamps and remaining space; the monitor warns at 80% usage or insufficient reserve. Archive size is the last completed archive, not a prediction. Reports older than three minutes are unknown. The health monitor itself retains its restricted permissions.
 
